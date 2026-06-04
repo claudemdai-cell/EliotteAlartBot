@@ -3,6 +3,10 @@ Scanner autónomo — corre cada 4 horas sin TradingView.
 Obtiene datos OHLCV de Crypto.com y evalúa las 5 capas.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'bot'))
+
 import time
 import requests
 from layers import WebhookPayload, evaluate_layers, format_alert_text
