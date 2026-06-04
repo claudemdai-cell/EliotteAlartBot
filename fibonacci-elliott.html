@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fibonacci — Elliott Wave</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f8f9fa;font-family:'Segoe UI',-apple-system,sans-serif;min-height:100vh}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+.header{background:linear-gradient(135deg,#fff,#fefce8,#fff);border-bottom:2px solid #fcd34d;padding:14px 20px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.header h1{font-size:17px;font-weight:900;color:#1f2937;letter-spacing:-.5px}
+.header p{font-size:11px;color:#9ca3af;margin-top:1px}
+.tabs{display:flex;gap:2px;padding:8px 16px 0;background:#fff;border-bottom:1px solid #e5e7eb;overflow-x:auto}
+.tab{padding:9px 13px;font-size:11px;font-weight:700;border:none;cursor:pointer;border-radius:8px 8px 0 0;white-space:nowrap;background:transparent;color:#9ca3af;border-bottom:2px solid transparent;transition:all .2s}
+.tab.active{background:#fffbeb;color:#92400e;border-bottom:2px solid #f59e0b}
+.tab:hover{background:#fefce8}
+.content{padding:16px;max-width:640px;margin:0 auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:#fff;border-radius:12px;padding:18px;border:1px solid #e5e7eb;box-shadow:0 1px 3px rgba(0,0,0,.04);margin-bottom:14px}
+
+/* GUIA COLAPSABLE */
+.guia-toggle{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin-bottom:14px;overflow:hidden}
+.guia-header{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;user-select:none}
+.guia-header:hover{background:#fef3c7}
+.guia-icon{font-size:15px}
+.guia-label{font-size:11px;font-weight:800;color:#92400e;letter-spacing:.6px;text-transform:uppercase;flex:1}
+.guia-chevron{font-size:11px;color:#92400e;transition:transform .2s}
+.guia-chevron.open{transform:rotate(180deg)}
+.guia-body{display:none;padding:0 14px 12px;border-top:1px solid #fde68a}
+.guia-body.open{display:block}
+.guia-step{display:flex;gap:10px;margin-top:9px;align-items:flex-start}
+.guia-num{width:20px;height:20px;border-radius:50%;background:#f59e0b;color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.guia-text{font-size:12px;color:#374151;line-height:1.6;flex:1}
+.guia-text strong{color:#1f2937;font-weight:700}
+.guia-formula{background:#1f2937;color:#f59e0b;font-family:'JetBrains Mono',monospace;font-size:11px;padding:7px 11px;border-radius:6px;margin:6px 0 4px;display:block;line-height:1.8}
+.guia-example{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:7px 11px;font-size:11px;color:#065f46;font-family:'JetBrains Mono',monospace;line-height:1.7;margin-top:4px}
+.guia-warn{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:7px 11px;font-size:11px;color:#c2410c;margin-top:6px;line-height:1.6}
+.guia-rule-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.guia-rule-box{border-radius:7px;padding:9px;border:1px solid}
+.guia-rule-box.r1{background:#eff6ff;border-color:#bfdbfe}
+.guia-rule-box.r2{background:#f0fdf4;border-color:#bbf7d0}
+.guia-rule-box.r3{background:#fff7ed;border-color:#fed7aa;grid-column:span 2}
+.guia-rule-title{font-size:11px;font-weight:800;margin-bottom:4px}
+.guia-rule-text{font-size:11px;color:#374151;line-height:1.6;font-family:'JetBrains Mono',monospace}
+
+.row-between{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.row-label{font-size:13px;font-weight:700;color:#374151}
+.toggle{display:flex;border-radius:8px;overflow:hidden;border:2px solid #e5e7eb}
+.toggle-btn{padding:7px 14px;font-size:11px;font-weight:700;border:none;cursor:pointer;background:#fff;color:#9ca3af;transition:all .2s}
+.toggle-btn.alc.on{background:#ecfdf5;color:#059669}
+.toggle-btn.baj.on{background:#fef2f2;color:#dc2626}
+.fields{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.field{flex:1;min-width:120px}
+.field label{display:block;font-size:10px;font-weight:700;color:#6b7280;margin-bottom:3px;letter-spacing:.5px;text-transform:uppercase}
+.field input{width:100%;padding:9px 11px;font-size:14px;font-family:'JetBrains Mono',monospace;border:2px solid #e5e7eb;border-radius:8px;background:#fff;color:#1f2937;outline:none;transition:border .2s}
+.field input:focus{border-color:#f59e0b}
+.field input[type=text]{font-family:'Segoe UI',sans-serif;font-size:12px}
+.dir-badge{font-size:11px;padding:6px 10px;border-radius:6px;margin-bottom:10px}
+.dir-badge.alc{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}
+.dir-badge.baj{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+.tipo-btns{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+.tipo-btn{flex:1;min-width:70px;padding:8px 6px;font-size:11px;font-weight:700;border:2px solid #e5e7eb;border-radius:8px;cursor:pointer;background:#fff;color:#6b7280;transition:all .2s}
+.tipo-btn.on{background:#fffbeb;color:#92400e;border-color:#f59e0b}
+.rlabel{font-size:10px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin:14px 0 6px;text-transform:uppercase}
+.rrow{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:7px;margin-bottom:3px;background:#f9fafb;border:1px solid #f3f4f6}
+.rrow.hl{background:#fffbeb;border-color:#fcd34d}
+.rrow.hl2{background:#ecfdf5;border-color:#a7f3d0}
+.rleft{display:flex;align-items:center;gap:8px}
+.rlabel2{font-size:12px;font-weight:700;color:#374151;min-width:55px}
+.rtag{font-size:10px;font-weight:600;padding:1px 7px;border-radius:5px;background:#f3f4f6;color:#6b7280}
+.rrow.hl .rtag{background:#fef3c7;color:#92400e}
+.rrow.hl2 .rtag{background:#d1fae5;color:#065f46}
+.rprice{font-size:14px;font-weight:800;color:#1f2937;font-family:'JetBrains Mono',monospace}
+.tip{margin-top:10px;padding:10px 12px;background:#fffbeb;border-radius:7px;border:1px solid #fcd34d;font-size:11px}
+.tip.green{background:#ecfdf5;border-color:#a7f3d0}
+.tip.blue{background:#eff6ff;border-color:#bfdbfe}
+.tip strong{font-weight:700;color:#92400e;display:block;margin-bottom:3px}
+.tip.green strong{color:#065f46}
+.tip.blue strong{color:#1d4ed8}
+.tip span{color:#78716c;line-height:1.6;display:block}
+.tip.green span{color:#047857;font-family:'JetBrains Mono',monospace}
+.tip.blue span{color:#1e40af}
+
+/* CONFLUENCIA */
+.conf-input-group{background:#f9fafb;border:1px solid #e5e7eb;border-radius:9px;padding:12px;margin-bottom:8px}
+.conf-group-title{font-size:10px;font-weight:700;color:#9ca3af;letter-spacing:.5px;margin-bottom:8px;text-transform:uppercase}
+.conf-zone{border-radius:8px;padding:12px 14px;margin-bottom:7px;border:1.5px solid;display:flex;align-items:flex-start;gap:10px}
+.conf-zone.strong{background:#ecfdf5;border-color:#6ee7b7}
+.conf-zone.medium{background:#fffbeb;border-color:#fcd34d}
+.conf-zone.weak{background:#f9fafb;border-color:#e5e7eb}
+.conf-zone-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.conf-zone-label{font-size:12px;font-weight:700;color:#1f2937;margin-bottom:2px}
+.conf-zone-range{font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:700;color:#1f2937}
+.conf-zone-desc{font-size:11px;color:#6b7280;margin-top:3px}
+.conf-zone-levels{font-size:11px;color:#9ca3af;margin-top:2px;font-family:'JetBrains Mono',monospace}
+.conf-table{width:100%;border-collapse:collapse;margin-top:12px}
+.conf-table th{text-align:left;font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;padding:7px 9px;border-bottom:1px solid #e5e7eb}
+.conf-table td{padding:9px;font-size:12px;border-bottom:1px solid #f3f4f6}
+.conf-table tr:last-child td{border-bottom:none}
+.conf-table td.mono{font-family:'JetBrains Mono',monospace}
+.pill{display:inline-block;padding:2px 8px;border-radius:9px;font-size:10px;font-weight:700}
+.pill-in{background:#d1fae5;color:#065f46}
+.pill-out{background:#fee2e2;color:#991b1b}
+.tol-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.tol-row label{font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px}
+.tol-row select{padding:5px 9px;border:2px solid #e5e7eb;border-radius:6px;font-size:11px;background:#fff;color:#374151;outline:none}
+.tol-row select:focus{border-color:#f59e0b}
+
+/* IDENTIFY */
+.id-box{background:#f9fafb;border-radius:10px;padding:18px;border:1px solid #e5e7eb;text-align:center;margin-bottom:10px}
+.id-title{font-size:10px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase}
+.id-ratio{font-size:34px;font-weight:900;color:#1f2937;font-family:'JetBrains Mono',monospace}
+.id-close{font-size:12px;color:#6b7280;margin-top:3px}
+.id-type{border-radius:9px;padding:12px;text-align:center;font-size:13px;font-weight:800}
+.id-stats{margin-top:10px;display:flex;gap:7px;flex-wrap:wrap}
+.id-stat{flex:1;background:#f9fafb;border-radius:7px;padding:9px;border:1px solid #f3f4f6}
+.id-stat-l{font-size:10px;color:#9ca3af;font-weight:700;text-transform:uppercase}
+.id-stat-v{font-size:13px;font-weight:800;color:#1f2937;font-family:'JetBrains Mono',monospace}
+
+/* INVALIDACIONES */
+.inv-card{background:#fff;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.inv-header{padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f3f4f6;background:#f9fafb}
+.inv-asset{font-size:15px;font-weight:900;color:#1f2937}
+.inv-price{font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;margin-left:auto}
+.inv-row{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #f9fafb;flex-wrap:wrap;gap:6px}
+.inv-row:last-child{border-bottom:none}
+.inv-label{font-size:12px;color:#374151;font-weight:600}
+.inv-sub{font-size:11px;color:#9ca3af;margin-top:2px}
+.inv-val{font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace}
+.inv-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.inv-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px}
+.badge-safe{background:#d1fae5;color:#065f46}
+.badge-warn{background:#fef3c7;color:#92400e}
+.badge-target{background:#ede9fe;color:#5b21b6}
+.inv-dist{font-size:11px;color:#9ca3af;font-family:'JetBrains Mono',monospace}
+
+/* QUICK REF */
+.qref{margin-top:16px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:10px}
+.qref-title{font-size:10px;font-weight:800;color:#9ca3af;letter-spacing:1px;margin-bottom:7px;text-transform:uppercase}
+.qref-text{font-family:'JetBrains Mono',monospace;font-size:11px;color:#6b7280;line-height:1.9}
+
+/* BASIC CALC */
+.bcalc{margin-top:16px;background:#fff;border-radius:12px;padding:18px;border:1px solid #e5e7eb}
+.bcalc-title{font-size:12px;font-weight:800;color:#374151;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+.bcalc-disp{background:#f9fafb;border-radius:9px;padding:10px 14px;margin-bottom:10px;border:1px solid #e5e7eb;text-align:right}
+.bcalc-prev{font-size:11px;color:#9ca3af;font-family:'JetBrains Mono',monospace;margin-bottom:2px;min-height:16px}
+.bcalc-cur{font-size:26px;font-weight:800;color:#1f2937;font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis}
+.bcalc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.bcalc-btn{padding:13px 0;font-size:17px;font-weight:700;border:none;border-radius:9px;cursor:pointer;transition:all .15s;font-family:'JetBrains Mono',monospace}
+.bcalc-btn:active{transform:scale(.95)}
+.b-num{background:#f9fafb;color:#1f2937;border:1px solid #e5e7eb}
+.b-op{background:#fffbeb;color:#92400e;border:1px solid #fcd34d}
+.b-eq{background:#f59e0b;color:#fff;border:1px solid #d97706}
+.b-fn{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb}
+.b-span2{grid-column:span 2}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span style="font-size:24px">🔢</span>
+  <div><h1>Fibonacci — Elliott Wave</h1><p>Retrocesos · Extensiones · Correcciones · Confluencia · Identificar · Invalidaciones</p></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('retroceso',this)">📉 Retrocesos</button>
+  <button class="tab" onclick="switchTab('extension',this)">📈 Extensiones</button>
+  <button class="tab" onclick="switchTab('correccion',this)">🔄 Correcciones</button>
+  <button class="tab" onclick="switchTab('confluencia',this)">🎯 Confluencia</button>
+  <button class="tab" onclick="switchTab('identificar',this)">🔍 Identificar %</button>
+  <button class="tab" onclick="switchTab('reglas',this)">📜 Reglas</button>
+  <button class="tab" onclick="switchTab('invalida',this)">⚠️ Invalidaciones</button>
+</div>
+
+<div class="content">
+
+<!-- ══════════════ RETROCESOS ══════════════ -->
+<div id="p-retroceso" class="panel active">
+  <div class="guia-toggle">
+    <div class="guia-header" onclick="toggleGuia('g-retroceso')">
+      <span class="guia-icon">📖</span>
+      <span class="guia-label">Guía — Cómo calcular retrocesos</span>
+      <span class="guia-chevron" id="chev-g-retroceso">▼</span>
+    </div>
+    <div class="guia-body" id="g-retroceso">
+      <div class="guia-step"><div class="guia-num">1</div><div class="guia-text">Identifica el <strong>inicio y fin</strong> de la onda impulsiva que corriges.</div></div>
+      <div class="guia-step"><div class="guia-num">2</div><div class="guia-text"><strong>Recorrido</strong> = |fin − inicio| (siempre positivo)</div></div>
+      <div class="guia-step"><div class="guia-num">3</div><div class="guia-text">Nivel = fin − (recorrido × ratio) si <strong>alcista</strong><br>Nivel = fin + (recorrido × ratio) si <strong>bajista</strong></div></div>
+      <code class="guia-formula">Alcista: nivel = fin − (recorrido × ratio)
+Bajista: nivel = fin + (recorrido × ratio)</code>
+      <div class="guia-example">BTC O1: $16K → $32K | rec = $16K
+50%: $32K − ($16K × 0.50) = $24,000
+61.8%: $32K − ($16K × 0.618) = $22,112</div>
+      <div class="guia-warn">⚠️ O2 típica: 50-61.8% de O1 &nbsp;|&nbsp; O4 típica: 23.6-38.2% de O3<br>Si O2 baja del inicio de O1 → R1 violada → conteo inválido</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row-between"><span class="row-label">Datos de la onda impulsiva</span>
+      <div class="toggle"><button class="toggle-btn alc on" id="r-alc" onclick="setDir('r','alc')">📈 Alcista</button><button class="toggle-btn baj" id="r-baj" onclick="setDir('r','baj')">📉 Bajista</button></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label>Inicio de onda</label><input type="number" id="r-inicio" placeholder="60000" oninput="calcR()"></div>
+      <div class="field"><label>Fin de onda</label><input type="number" id="r-fin" placeholder="80000" oninput="calcR()"></div>
+    </div>
+    <div id="r-out"></div>
+  </div>
+</div>
+
+<!-- ══════════════ EXTENSIONES ══════════════ -->
+<div id="p-extension" class="panel">
+  <div class="guia-toggle">
+    <div class="guia-header" onclick="toggleGuia('g-extension')">
+      <span class="guia-icon">📖</span>
+      <span class="guia-label">Guía — Cómo calcular extensiones (targets O3/O5)</span>
+      <span class="guia-chevron" id="chev-g-extension">▼</span>
+    </div>
+    <div class="guia-body" id="g-extension">
+      <div class="guia-step"><div class="guia-num">1</div><div class="guia-text"><strong>Recorrido O1</strong> = |fin O1 − inicio O1|</div></div>
+      <div class="guia-step"><div class="guia-num">2</div><div class="guia-text"><strong>Punto de partida</strong> = fin de O2 (donde empieza O3). Siempre desde fin O2, no desde inicio O1.</div></div>
+      <div class="guia-step"><div class="guia-num">3</div><div class="guia-text">Target = fin O2 + (recorrido O1 × ratio) si <strong>alcista</strong></div></div>
+      <code class="guia-formula">Target O3 alcista = fin O2 + (recorrido O1 × ratio)
+Target O3 bajista = fin O2 − (recorrido O1 × ratio)</code>
+      <div class="guia-example">ETH Ciclo 2: O1=$80→$4,800 → rec=$4,720 | fin O2=$880
+161.8%: $880 + ($4,720 × 1.618) = $8,516
+261.8%: $880 + ($4,720 × 2.618) = $13,236</div>
+      <div class="guia-warn">⚠️ Solo usas el recorrido de O1. La base siempre es fin de O2, no inicio de O1.<br>O3 BTC más común: 161.8× | O3 muy fuerte: 261.8×</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row-between"><span class="row-label">Proyectar onda siguiente</span>
+      <div class="toggle"><button class="toggle-btn alc on" id="e-alc" onclick="setDir('e','alc')">📈 Alcista</button><button class="toggle-btn baj" id="e-baj" onclick="setDir('e','baj')">📉 Bajista</button></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label>Recorrido de O1</label><input type="number" id="e-rec" placeholder="15000" oninput="calcE()"></div>
+      <div class="field"><label>Fin de O2 (punto de partida)</label><input type="number" id="e-o2" placeholder="66000" oninput="calcE()"></div>
+    </div>
+    <div id="e-out"></div>
+  </div>
+</div>
+
+<!-- ══════════════ CORRECCIONES ══════════════ -->
+<div id="p-correccion" class="panel">
+  <div class="guia-toggle">
+    <div class="guia-header" onclick="toggleGuia('g-correccion')">
+      <span class="guia-icon">📖</span>
+      <span class="guia-label">Guía — Cómo calcular correcciones A-B-C</span>
+      <span class="guia-chevron" id="chev-g-correccion">▼</span>
+    </div>
+    <div class="guia-body" id="g-correccion">
+      <div class="guia-step"><div class="guia-num">1</div><div class="guia-text"><strong>Onda A:</strong> recorrido = |fin A − inicio corrección|</div></div>
+      <div class="guia-step"><div class="guia-num">2</div><div class="guia-text"><strong>Onda B:</strong> retroceso de A medido desde fin de A (sube si A bajó, baja si A subió)</div></div>
+      <div class="guia-step"><div class="guia-num">3</div><div class="guia-text"><strong>Onda C:</strong> se mide desde el <strong>inicio de la corrección</strong>, NO desde fin de B</div></div>
+      <code class="guia-formula">B alcista (A bajó): fin A + (rec A × ratio B)
+C alcista (A bajó): inicio corrección − (rec A × ratio C)</code>
+      <div class="guia-example">BTC: impulso terminó $128K | A baja a $80K → rec A = $48K
+B típica zigzag (50%): $80K + ($48K × 0.50) = $104K
+C = A: $128K − ($48K × 1.0) = $80K
+C = 1.618×A: $128K − ($48K × 1.618) = $50.3K</div>
+      <div class="guia-warn">⚠️ ERROR COMÚN: medir C desde fin de B. C SIEMPRE desde INICIO de la corrección.<br>Zigzag: B corta (38-62%) · Plana: B larga (78-100%+)</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row-between"><span class="row-label">Fibonacci en correcciones</span>
+      <div class="toggle"><button class="toggle-btn alc on" id="c-alc" onclick="setDir('c','alc')">📈 Alcista</button><button class="toggle-btn baj" id="c-baj" onclick="setDir('c','baj')">📉 Bajista</button></div>
+    </div>
+    <div class="dir-badge alc" id="c-badge">📈 El impulso subió → la corrección BAJA (A↓ B↑ C↓)</div>
+    <div class="tipo-btns">
+      <button class="tipo-btn on" id="ct-zigzag" onclick="setTipo('zigzag')">⚡ Zigzag</button>
+      <button class="tipo-btn" id="ct-plana" onclick="setTipo('plana')">📐 Plana</button>
+      <button class="tipo-btn" id="ct-ambos" onclick="setTipo('ambos')">📊 Ambos</button>
+      <button class="tipo-btn" id="ct-triangulo" onclick="setTipo('triangulo')">🔺 Triángulo</button>
+    </div>
+    <div class="fields">
+      <div class="field"><label>Inicio corrección (fin del impulso)</label><input type="number" id="c-inicio" placeholder="100000" oninput="calcC()"></div>
+      <div class="field"><label>Fin de onda A</label><input type="number" id="c-fina" placeholder="85000" oninput="calcC()"></div>
+    </div>
+    <div id="c-out"></div>
+  </div>
+</div>
+
+<!-- ══════════════ CONFLUENCIA ══════════════ -->
+<div id="p-confluencia" class="panel">
+  <div class="guia-toggle">
+    <div class="guia-header" onclick="toggleGuia('g-confluencia')">
+      <span class="guia-icon">📖</span>
+      <span class="guia-label">Guía — Cómo usar confluencia</span>
+      <span class="guia-chevron" id="chev-g-confluencia">▼</span>
+    </div>
+    <div class="guia-body" id="g-confluencia">
+      <div class="guia-step"><div class="guia-num">1</div><div class="guia-text">Calcula los niveles Fibonacci de <strong>distintas fuentes</strong> por separado (retroceso de O3, extensión de O1, target de C, etc.)</div></div>
+      <div class="guia-step"><div class="guia-num">2</div><div class="guia-text">Ingresa cada nivel aquí con una descripción. La herramienta detecta cuáles caen en la misma zona (±1-2%).</div></div>
+      <div class="guia-step"><div class="guia-num">3</div><div class="guia-text"><strong>2 niveles coincidentes</strong> = zona relevante &nbsp;|&nbsp; <strong>3+ coincidentes</strong> = zona de alta probabilidad de reacción</div></div>
+      <div class="guia-example">Ejemplo BTC O2:
+50% de O1 ($16K→$128K) = $62,500
+C=A del zigzag = $63,000
+→ CONFLUENCIA: zona $62,500-$63,000 🟡</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row-label" style="margin-bottom:12px">Ingresa hasta 4 niveles calculados por separado</div>
+    <div class="tol-row"><label>Tolerancia:</label>
+      <select id="c-tol" onchange="calcConf()">
+        <option value="1">1% estricto</option><option value="2" selected>2% estándar</option><option value="3">3% amplio</option>
+      </select>
+    </div>
+    <div class="conf-input-group"><div class="conf-group-title">Nivel 1</div>
+      <div class="fields"><div class="field"><label>Precio</label><input type="number" id="c1p" placeholder="63500" oninput="calcConf()"></div><div class="field"><label>Descripción</label><input type="text" id="c1d" placeholder="ej. 50% de O1" oninput="calcConf()"></div></div>
+    </div>
+    <div class="conf-input-group"><div class="conf-group-title">Nivel 2</div>
+      <div class="fields"><div class="field"><label>Precio</label><input type="number" id="c2p" placeholder="63200" oninput="calcConf()"></div><div class="field"><label>Descripción</label><input type="text" id="c2d" placeholder="ej. C=A zigzag" oninput="calcConf()"></div></div>
+    </div>
+    <div class="conf-input-group"><div class="conf-group-title">Nivel 3 (opcional)</div>
+      <div class="fields"><div class="field"><label>Precio</label><input type="number" id="c3p" oninput="calcConf()"></div><div class="field"><label>Descripción</label><input type="text" id="c3d" oninput="calcConf()"></div></div>
+    </div>
+    <div class="conf-input-group"><div class="conf-group-title">Nivel 4 (opcional)</div>
+      <div class="fields"><div class="field"><label>Precio</label><input type="number" id="c4p" oninput="calcConf()"></div><div class="field"><label>Descripción</label><input type="text" id="c4d" oninput="calcConf()"></div></div>
+    </div>
+    <div id="conf-out"></div>
+  </div>
+</div>
+
+<!-- ══════════════ IDENTIFICAR ══════════════ -->
+<div id="p-identificar" class="panel">
+  <div class="guia-toggle">
+    <div class="guia-header" onclick="toggleGuia('g-identificar')">
+      <span class="guia-icon">📖</span>
+      <span class="guia-label">Guía — Cómo identificar qué ratio es</span>
+      <span class="guia-chevron" id="chev-g-identificar">▼</span>
+    </div>
+    <div class="guia-body" id="g-identificar">
+      <div class="guia-step"><div class="guia-num">1</div><div class="guia-text"><strong>P1</strong> = precio inicio del movimiento (ej. inicio de O1)</div></div>
+      <div class="guia-step"><div class="guia-num">2</div><div class="guia-text"><strong>P2</strong> = precio fin del movimiento (ej. fin de O1, el extremo)</div></div>
+      <div class="guia-step"><div class="guia-num">3</div><div class="guia-text"><strong>P3</strong> = precio del retroceso que quieres identificar</div></div>
+      <code class="guia-formula">Recorrido = |P2 − P1|
+Retroceso = |P3 − P2|
+Ratio = retroceso ÷ recorrido</code>
+      <div class="guia-example">BTC: P1=$16K, P2=$128K, P3=$73K
+Recorrido = |$128K − $16K| = $112K
+Retroceso = |$73K − $128K| = $55K
+Ratio = $55K ÷ $112K = 49.1% ≈ 50%</div>
+    </div>
+  </div>
+  <div class="card">
+    <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:14px">Ingresa 3 precios para identificar el ratio</div>
+    <div class="fields">
+      <div class="field"><label>P1 — Precio inicio</label><input type="number" id="i-p1" placeholder="60000" oninput="calcI()"></div>
+      <div class="field"><label>P2 — Precio fin (extremo)</label><input type="number" id="i-p2" placeholder="80000" oninput="calcI()"></div>
+      <div class="field"><label>P3 — Precio retroceso</label><input type="number" id="i-p3" placeholder="72000" oninput="calcI()"></div>
+    </div>
+    <div id="i-out"></div>
+  </div>
+</div>
+
+<!-- ══════════════ REGLAS ══════════════ -->
+<div id="p-reglas" class="panel">
+  <div class="card">
+    <div style="font-size:14px;font-weight:800;color:#1f2937;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #f59e0b">📜 Las 3 Reglas Inviolables</div>
+
+    <div class="guia-rule-grid">
+      <div class="guia-rule-box r1">
+        <div class="guia-rule-title" style="color:#1d4ed8">R1 — O2 no pasa inicio de O1</div>
+        <div class="guia-rule-text">📈 Alcista: O2 no MENOR que inicio O1<br>📉 Bajista: O2 no MAYOR que inicio O1<br><br>Punto de referencia: INICIO de O1<br><br>BTC inv: $16,000<br>ETH inv: $80</div>
+      </div>
+      <div class="guia-rule-box r2">
+        <div class="guia-rule-title" style="color:#065f46">R2 — O3 no es la más corta</div>
+        <div class="guia-rule-text">O3 no puede ser la más corta de O1, O3 y O5<br><br>Calcular recorrido de las 3<br>Verificar que O3 no sea el menor<br><br>No exige que O3 sea la más larga — solo que no sea la más corta</div>
+      </div>
+      <div class="guia-rule-box r3">
+        <div class="guia-rule-title" style="color:#c2410c">R3 — O4 no entra en rango de O1</div>
+        <div class="guia-rule-text">📈 Alcista: O4 no MENOR que final de O1 &nbsp;|&nbsp; 📉 Bajista: O4 no MAYOR que final de O1<br>Punto de referencia: FINAL de O1 (no inicio)<br>Excepción única: diagonal (triángulo inclinado) en O5 — O4 SÍ puede entrar en rango de O1</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;background:#1f2937;color:#f59e0b;font-family:'JetBrains Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;line-height:1.9">
+      🔑 REGLA UNIVERSAL:<br>
+      Alcista → no puede ser MENOR<br>
+      Bajista → no puede ser MAYOR<br>
+      R1 = referencia INICIO O1 &nbsp;|&nbsp; R3 = referencia FINAL O1
+    </div>
+
+    <div style="margin-top:16px;font-size:13px;font-weight:800;color:#1f2937;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">⚠️ 5 Errores Comunes de Conteo</div>
+    <div class="guia-step"><div class="guia-num">1</div><div class="guia-text"><strong>TF equivocado</strong> — Siempre mensual → semanal → diario → 4h. Nunca al revés.</div></div>
+    <div class="guia-step"><div class="guia-num">2</div><div class="guia-text"><strong>Forzar 5 ondas donde hay 3</strong> — Contar subondas internas para confirmar impulso vs corrección.</div></div>
+    <div class="guia-step"><div class="guia-num">3</div><div class="guia-text"><strong>Ignorar TF superior</strong> — Un impulso en 4h puede ser solo onda B de una corrección en semanal.</div></div>
+    <div class="guia-step"><div class="guia-num">4</div><div class="guia-text"><strong>Mover ondas sin razón de regla</strong> — Solo mover si viola R1, R2 o R3. No por conveniencia.</div></div>
+    <div class="guia-step"><div class="guia-num">5</div><div class="guia-text"><strong>No tener invalidación</strong> — Todo conteo necesita un precio que lo destruye. Sin ese precio, el conteo no sirve.</div></div>
+    <div class="guia-warn" style="margin-top:10px">✅ Onda terminada cuando: alcanzó target Fibonacci mínimo (1.618×) + siguiente conteo no viola reglas</div>
+  </div>
+</div>
+
+<!-- ══════════════ INVALIDACIONES ══════════════ -->
+<div id="p-invalida" class="panel">
+  <div class="tip blue" style="margin-bottom:14px">
+    <strong>¿Qué es una invalidación?</strong>
+    <span>El precio que, si se rompe, destruye el conteo porque viola una regla inviolable. Sin este número claro no puedes gestionar riesgo. Revisa estos niveles antes de cada sesión.</span>
+  </div>
+
+  <div class="inv-card">
+    <div class="inv-header">
+      <span style="font-size:22px">₿</span>
+      <div><div class="inv-asset">Bitcoin — BTC</div><div style="font-size:11px;color:#9ca3af">Nuevo ciclo desde $16K | O1-O5 completado hasta $128K</div></div>
+      <div style="text-align:right;margin-left:auto"><div style="font-size:10px;color:#9ca3af">Precio actual</div><div class="inv-price" style="color:#f59e0b">~$73K</div></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🔴 Invalidación total — R1</div><div class="inv-sub">O2 no puede pasar inicio de O1 ($16K)</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#dc2626">$16,000</div><span class="inv-badge badge-safe">✅ Seguro</span><span class="inv-dist">+357%</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🟡 Soporte O2 — Fibonacci 50%</div><div class="inv-sub">50% de O1 ($16K→$128K) | rec=$112K × 0.50</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#d97706">$62,500</div><span class="inv-badge badge-warn">Zona actual</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🟡 Soporte O2 — Fibonacci 61.8%</div><div class="inv-sub">61.8% de O1 ($16K→$128K) | rec=$112K × 0.618</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#d97706">$51,500</div><span class="inv-badge badge-warn">Siguiente soporte</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">📋 Estructura actual</div></div>
+      <div class="inv-right"><div style="font-size:11px;color:#6b7280;font-family:'JetBrains Mono',monospace;text-align:right">O2 en corrección ABC zigzag<br>Triángulo en 4h formando<br>BTC no puede romper $16K</div></div>
+    </div>
+  </div>
+
+  <div class="inv-card">
+    <div class="inv-header">
+      <span style="font-size:22px">Ξ</span>
+      <div><div class="inv-asset">Ethereum — ETH</div><div style="font-size:11px;color:#9ca3af">Ciclo 2 mensual | O3 en curso desde $880</div></div>
+      <div style="text-align:right;margin-left:auto"><div style="font-size:10px;color:#9ca3af">Precio actual</div><div class="inv-price" style="color:#a78bfa">~$2,350</div></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🔴 Invalidación total Ciclo 2 — R1</div><div class="inv-sub">O3 no puede pasar inicio de O2 (fin de O1 = $4,800)</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#dc2626">$880</div><span class="inv-badge badge-safe">✅ Seguro</span><span class="inv-dist">+167%</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🟡 Invalidación semanal — subonda</div><div class="inv-sub">O2 del semanal en ~$2,100 — R1 semanal</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#d97706">$2,100</div><span class="inv-badge badge-warn">Vigilar</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🎯 Target O3 mensual — 161.8%</div><div class="inv-sub">$880 + ($4,720 × 1.618) | O1 rec = $4,720</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#059669">$8,516</div><span class="inv-badge badge-target">Target 1</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">🎯 Target O3 mensual — 261.8%</div><div class="inv-sub">$880 + ($4,720 × 2.618) | extensión fuerte</div></div>
+      <div class="inv-right"><div class="inv-val" style="color:#059669">$13,236</div><span class="inv-badge badge-target">Target 2</span></div>
+    </div>
+    <div class="inv-row">
+      <div><div class="inv-label">📋 Estructura actual</div></div>
+      <div class="inv-right"><div style="font-size:11px;color:#6b7280;font-family:'JetBrains Mono',monospace;text-align:right">O3 mensual en curso<br>HH confirmado: $4,963 ago 2025<br>Corrección interna de O3</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- QUICK REF -->
+<div class="qref">
+  <div class="qref-title">Referencia Rápida</div>
+  <div class="qref-text">
+    O2: 50-61.8% de O1 &nbsp;|&nbsp; O4: 23.6-38.2% de O3<br>
+    Target O3: fin O2 + (rec O1 × 1.618)<br>
+    Target O5: fin O4 + (rec O1 × 1.0)<br>
+    Zigzag: B=38-62%A · C=A o 1.618×A<br>
+    Plana: B=78-100%+A · C≈A o más<br>
+    Triángulo: solo O4 o B · anuncia última onda<br>
+    C desde INICIO corrección, no desde fin B<br>
+    Invalidación: BTC=$16K · ETH=$880
+  </div>
+</div>
+
+<!-- BASIC CALC -->
+<div class="bcalc">
+  <div class="bcalc-title"><span>🧮</span> Calculadora</div>
+  <div class="bcalc-disp"><div class="bcalc-prev" id="bc-prev"></div><div class="bcalc-cur" id="bc-disp">0</div></div>
+  <div class="bcalc-grid">
+    <button class="bcalc-btn b-fn" onclick="bC()">C</button><button class="bcalc-btn b-fn" onclick="bNeg()">±</button><button class="bcalc-btn b-fn" onclick="bPct()">%</button><button class="bcalc-btn b-op" onclick="bOp('÷')">÷</button>
+    <button class="bcalc-btn b-num" onclick="bIn('7')">7</button><button class="bcalc-btn b-num" onclick="bIn('8')">8</button><button class="bcalc-btn b-num" onclick="bIn('9')">9</button><button class="bcalc-btn b-op" onclick="bOp('×')">×</button>
+    <button class="bcalc-btn b-num" onclick="bIn('4')">4</button><button class="bcalc-btn b-num" onclick="bIn('5')">5</button><button class="bcalc-btn b-num" onclick="bIn('6')">6</button><button class="bcalc-btn b-op" onclick="bOp('-')">−</button>
+    <button class="bcalc-btn b-num" onclick="bIn('1')">1</button><button class="bcalc-btn b-num" onclick="bIn('2')">2</button><button class="bcalc-btn b-num" onclick="bIn('3')">3</button><button class="bcalc-btn b-op" onclick="bOp('+')">+</button>
+    <button class="bcalc-btn b-num b-span2" onclick="bIn('0')">0</button><button class="bcalc-btn b-num" onclick="bIn('.')">.</button><button class="bcalc-btn b-eq" onclick="bEq()">=</button>
+  </div>
+</div>
+
+</div>
+
+<script>
+const S={r:{dir:'alc'},e:{dir:'alc'},c:{dir:'alc',tipo:'zigzag'}};
+function fmt(n){if(n===null||n===undefined||isNaN(n))return'—';return'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2});}
+function rrow(lbl,val,tag,hl,hl2){const cls=hl?'hl':hl2?'hl2':'';return`<div class="rrow ${cls}"><div class="rleft"><span class="rlabel2">${lbl}</span>${tag?`<span class="rtag">${tag}</span>`:''}</div><span class="rprice">${fmt(val)}</span></div>`;}
+function rrowE(lbl,val,tag,emoji,prob,hl,hl2,isDead){
+  const cls=isDead?'dead':hl?'hl':hl2?'hl2':'';
+  const probColor=hl?'#92400e':hl2?'#065f46':isDead?'#dc2626':'#6b7280';
+  return`<div class="rrow ${cls}" style="${isDead?'opacity:0.6':''}">
+    <div class="rleft">
+      <span class="rlabel2">${lbl}</span>
+      <span style="font-size:16px">${emoji}</span>
+      <span class="rtag">${tag}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:10px;font-weight:700;color:${probColor}">${prob}</span>
+      <span class="rprice">${fmt(val)}</span>
+    </div>
+  </div>`;
+}
+function switchTab(id,btn){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));document.getElementById('p-'+id).classList.add('active');btn.classList.add('active');}
+function toggleGuia(id){const body=document.getElementById(id);const chev=document.getElementById('chev-'+id);const isOpen=body.classList.contains('open');body.classList.toggle('open',!isOpen);chev.classList.toggle('open',!isOpen);}
+function setDir(pre,dir){S[pre].dir=dir;['alc','baj'].forEach(d=>{const b=document.getElementById(pre+'-'+d);if(b)b.classList.toggle('on',d===dir);});if(pre==='c'){const badge=document.getElementById('c-badge');badge.className='dir-badge '+dir;badge.textContent=dir==='alc'?'📈 El impulso subió → la corrección BAJA (A↓ B↑ C↓)':'📉 El impulso bajó → la corrección SUBE (A↑ B↓ C↑)';calcC();}if(pre==='r')calcR();if(pre==='e')calcE();}
+function setTipo(t){S.c.tipo=t;['zigzag','plana','ambos','triangulo'].forEach(x=>document.getElementById('ct-'+x).classList.toggle('on',x===t));calcC();}
+const RT=[
+  {r:0.236,l:'23.6%',t:'O4 shallow',e:'😴💨',prob:'RARO'},
+  {r:0.382,l:'38.2%',t:'O4 típica',e:'👀😊',prob:'PROBABLE'},
+  {r:0.500,l:'50.0%',t:'O2 típica',e:'🔥😍',prob:'MUY PROBABLE'},
+  {r:0.618,l:'61.8%',t:'O2 típica',e:'🔥😍',prob:'MUY PROBABLE'},
+  {r:0.786,l:'78.6%',t:'O2 profunda',e:'🤔😐',prob:'POCO PROBABLE'},
+  {r:1.000,l:'100%', t:'invalidación',e:'☠️💥',prob:'NO DEBERÍA LLEGAR'},
+];
+function calcR(){const a=parseFloat(document.getElementById('r-inicio').value),b=parseFloat(document.getElementById('r-fin').value),el=document.getElementById('r-out');if(!a||!b){el.innerHTML='';return;}const rec=Math.abs(b-a),alc=S.r.dir==='alc';let h=`<div class="rlabel">Recorrido: ${fmt(rec)} — Niveles de retroceso</div>`;RT.forEach(f=>{const p=alc?b-rec*f.r:b+rec*f.r;h+=rrowE(f.l,p,f.t,f.e,f.prob,f.r===0.5||f.r===0.618,f.r===0.382,f.r===1.0);});h+=`<div class="tip"><strong>💡 Recuerda</strong><span>O2 → 50-61.8% de O1 (profundo) &nbsp;|&nbsp; O4 → 23.6-38.2% de O3 (superficial)</span></div>`;el.innerHTML=h;}
+const ET=[
+  {r:1.000,l:'100%',  t:'igualdad / O5 típica',  e:'👀😊',prob:'PROBABLE'},
+  {r:1.272,l:'127.2%',t:'O3 moderada',             e:'👀😊',prob:'PROBABLE'},
+  {r:1.618,l:'161.8%',t:'O3 típica BTC',           e:'🔥😍',prob:'MUY PROBABLE'},
+  {r:2.000,l:'200%',  t:'O3 fuerte',               e:'🤔😐',prob:'POCO PROBABLE'},
+  {r:2.618,l:'261.8%',t:'O3 extensión fuerte',     e:'🔥😍',prob:'MUY PROBABLE'},
+  {r:3.618,l:'361.8%',t:'O3 muy fuerte',           e:'😴💨',prob:'RARO'},
+];
+function calcE(){const rec=parseFloat(document.getElementById('e-rec').value),o2=parseFloat(document.getElementById('e-o2').value),el=document.getElementById('e-out');if(!rec||!o2){el.innerHTML='';return;}const alc=S.e.dir==='alc';let h=`<div class="rlabel">Targets de extensión</div>`;ET.forEach(f=>{const p=alc?o2+rec*f.r:o2-rec*f.r;h+=rrowE(f.l,p,f.t,f.e,f.prob,f.r===1.618||f.r===2.618,f.r===1.0,false);});h+=`<div class="tip green"><strong>🔢 Fórmula</strong><span>Target = fin O2 ${alc?'+':'−'} (recorrido O1 × ratio)</span></div>`;el.innerHTML=h;}
+function getBT(t){
+  if(t==='zigzag')return[
+    {r:0.382,l:'38.2%',t:'B mínima',     e:'😴💨',prob:'RARO'},
+    {r:0.500,l:'50.0%',t:'B típica',     e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:0.618,l:'61.8%',t:'B máxima',     e:'👀😊',prob:'PROBABLE'},
+  ];
+  if(t==='plana')return[
+    {r:0.786,l:'78.6%',t:'B mínima plana', e:'👀😊',prob:'PROBABLE'},
+    {r:0.900,l:'90.0%',t:'B típica plana', e:'👀😊',prob:'PROBABLE'},
+    {r:1.000,l:'100%', t:'B = A',          e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:1.236,l:'123.6%',t:'B > A',         e:'🤔😐',prob:'POCO PROBABLE'},
+  ];
+  if(t==='triangulo')return[
+    {r:0.618,l:'61.8%',t:'B típica', e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:0.786,l:'78.6%',t:'B máxima', e:'👀😊',prob:'PROBABLE'},
+  ];
+  return[
+    {r:0.382,l:'38.2%',t:'zigzag',         e:'😴💨',prob:'RARO'},
+    {r:0.500,l:'50.0%',t:'zigzag típica',  e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:0.618,l:'61.8%',t:'zigzag max',     e:'👀😊',prob:'PROBABLE'},
+    {r:0.786,l:'78.6%',t:'plana mín',      e:'👀😊',prob:'PROBABLE'},
+    {r:1.000,l:'100%', t:'plana regular',  e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:1.236,l:'123.6%',t:'plana expandida',e:'🤔😐',prob:'POCO PROBABLE'},
+  ];
+}
+function getCT(t){
+  if(t==='zigzag')return[
+    {r:0.618,l:'C = 0.618×A',t:'',             e:'😴💨',prob:'RARO'},
+    {r:1.000,l:'C = A',      t:'Más común',    e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:1.272,l:'C = 1.272×A',t:'Extendida',    e:'👀😊',prob:'PROBABLE'},
+    {r:1.618,l:'C = 1.618×A',t:'Muy extendida',e:'🤔😐',prob:'POCO PROBABLE'},
+  ];
+  if(t==='plana')return[
+    {r:0.786,l:'C = 0.786×A',t:'',              e:'😴💨',prob:'RARO'},
+    {r:1.000,l:'C = A',      t:'Plana regular', e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:1.272,l:'C = 1.272×A',t:'Plana expandida',e:'👀😊',prob:'PROBABLE'},
+    {r:1.618,l:'C = 1.618×A',t:'Muy expandida', e:'🤔😐',prob:'POCO PROBABLE'},
+  ];
+  if(t==='triangulo')return[
+    {r:0.618,l:'C = 0.618×A',t:'Típica', e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:0.786,l:'C = 0.786×A',t:'Máxima', e:'👀😊',prob:'PROBABLE'},
+  ];
+  return[
+    {r:0.618,l:'C = 0.618×A',t:'',             e:'😴💨',prob:'RARO'},
+    {r:1.000,l:'C = A',      t:'1:1',          e:'🔥😍',prob:'MUY PROBABLE'},
+    {r:1.272,l:'C = 1.272×A',t:'Extendida',    e:'👀😊',prob:'PROBABLE'},
+    {r:1.618,l:'C = 1.618×A',t:'Muy extendida',e:'🤔😐',prob:'POCO PROBABLE'},
+  ];
+}
+const TIPS={zigzag:'B retrocede poco (38-62% de A). C = A o 1.618×A. Corrección agresiva tipo cuchillo.',plana:'B retrocede mucho (78-100%+ de A). C ≈ A o más. Corrección lateral tipo mesa.',triangulo:'Cada onda más pequeña. B ≈ 61.8% de A. Solo en O4 o B. Anuncia última onda.',ambos:'Todos los niveles B y C. Identifica el tipo según dónde termina B.'};
+function calcC(){const ini=parseFloat(document.getElementById('c-inicio').value),fa=parseFloat(document.getElementById('c-fina').value),el=document.getElementById('c-out');if(!ini||!fa){el.innerHTML='';return;}const recA=Math.abs(fa-ini),alc=S.c.dir==='alc',tipo=S.c.tipo;let h=`<div class="rlabel">Recorrido A: ${fmt(recA)} — Targets de B</div>`;getBT(tipo).forEach(f=>{const p=alc?fa+recA*f.r:fa-recA*f.r;const hl=tipo==='zigzag'?f.r===0.5:tipo==='plana'?f.r===1.0:tipo==='triangulo'?f.r===0.618:f.r===0.5||f.r===1.0;h+=rrowE(f.l,p,f.t,f.e,f.prob,hl,false,false);});h+=`<div class="rlabel" style="margin-top:14px">Targets de C (desde inicio corrección: ${fmt(ini)})</div>`;getCT(tipo).forEach(f=>{const p=alc?ini-recA*f.r:ini+recA*f.r;const hl=f.r===1.0||(tipo==='triangulo'&&f.r===0.618);h+=rrowE(f.l,p,f.t,f.e,f.prob,hl,f.r===0.618&&tipo!=='triangulo',false);});h+=`<div class="tip"><strong>💡 ${tipo==='ambos'?'ZIGZAG + PLANA':tipo.toUpperCase()}</strong><span>${TIPS[tipo]}</span></div>`;el.innerHTML=h;}
+function calcConf(){const tol=parseFloat(document.getElementById('c-tol').value)/100;const inputs=[1,2,3,4].map(i=>({price:parseFloat(document.getElementById('c'+i+'p').value),desc:document.getElementById('c'+i+'d').value||('Nivel '+i)})).filter(x=>!isNaN(x.price));const el=document.getElementById('conf-out');if(inputs.length<2){el.innerHTML='';return;}const used=new Set(),clusters=[];for(let i=0;i<inputs.length;i++){if(used.has(i))continue;const group=[inputs[i]];used.add(i);for(let j=i+1;j<inputs.length;j++){if(used.has(j))continue;if(Math.abs(inputs[i].price-inputs[j].price)/inputs[i].price<=tol){group.push(inputs[j]);used.add(j);}}clusters.push(group);}clusters.sort((a,b)=>b.length-a.length);let h=`<div class="rlabel">Análisis — tolerancia ${(tol*100).toFixed(0)}%</div>`;clusters.forEach(group=>{const prices=group.map(g=>g.price);const min=Math.min(...prices),max=Math.max(...prices),center=(min+max)/2;const diffPct=((max-min)/center*100).toFixed(2);let cls,icon,label,desc;if(group.length>=3){cls='strong';icon='🟢';label='CONFLUENCIA FUERTE';desc=group.length+' niveles coinciden — zona de alta probabilidad';}else if(group.length===2){cls='medium';icon='🟡';label='CONFLUENCIA';desc='2 niveles coinciden — zona relevante';}else{cls='weak';icon='⚪';label='Nivel aislado';desc='Sin confluencia';}h+=`<div class="conf-zone ${cls}"><div class="conf-zone-icon">${icon}</div><div style="flex:1"><div class="conf-zone-label">${label}</div><div class="conf-zone-range">${fmt(min)} — ${fmt(max)}</div><div class="conf-zone-desc">${desc} · dispersión: ${diffPct}%</div><div class="conf-zone-levels">${group.map(g=>g.desc+': '+fmt(g.price)).join(' · ')}</div></div></div>`;});h+=`<table class="conf-table"><thead><tr><th>Descripción</th><th>Precio</th><th>Estado</th></tr></thead><tbody>`;inputs.forEach(inp=>{const inC=clusters.find(c=>c.length>=2&&c.some(g=>g.price===inp.price));h+=`<tr><td>${inp.desc}</td><td class="mono">${fmt(inp.price)}</td><td>${inC?'<span class="pill pill-in">en zona</span>':'<span class="pill pill-out">aislado</span>'}</td></tr>`;});h+=`</tbody></table>`;el.innerHTML=h;}
+function calcI(){const p1=parseFloat(document.getElementById('i-p1').value),p2=parseFloat(document.getElementById('i-p2').value),p3=parseFloat(document.getElementById('i-p3').value),el=document.getElementById('i-out');if((!p1&&p1!==0)||!p2||!p3){el.innerHTML='';return;}const rec=Math.abs(p2-p1),ret=Math.abs(p3-p2);if(!rec){el.innerHTML='';return;}const ratio=ret/rec;const fibs=[{v:0.236,l:'23.6%'},{v:0.382,l:'38.2%'},{v:0.5,l:'50.0%'},{v:0.618,l:'61.8%'},{v:0.786,l:'78.6%'},{v:1.0,l:'100%'},{v:1.272,l:'127.2%'},{v:1.618,l:'161.8%'},{v:2.0,l:'200%'},{v:2.618,l:'261.8%'}];const cl=fibs.reduce((a,b)=>Math.abs(b.v-ratio)<Math.abs(a.v-ratio)?b:a);const exact=Math.abs(ratio-cl.v)<0.02;let type,tc,tb;if(ratio>=0.45&&ratio<=0.65){type='O2 típica';tc='#059669';tb='#ecfdf5';}else if(ratio>=0.20&&ratio<=0.42){type='O4 típica';tc='#2563eb';tb='#eff6ff';}else if(ratio>=0.65&&ratio<=0.85){type='O2 profunda / B plana';tc='#d97706';tb='#fffbeb';}else if(ratio>=0.85&&ratio<=1.15){type='B plana regular/expandida';tc='#dc2626';tb='#fef2f2';}else if(ratio>1.15){type='Extensión (>100%)';tc='#7c3aed';tb='#f5f3ff';}else{type='Retroceso poco profundo';tc='#6b7280';tb='#f9fafb';}el.innerHTML=`<div class="id-box"><div class="id-title">Ratio Calculado</div><div class="id-ratio">${(ratio*100).toFixed(1)}%</div><div class="id-close">Fibonacci más cercano: <strong style="color:#f59e0b">${cl.l}</strong>${exact?'<span style="color:#059669;margin-left:8px">✓ exacto</span>':''}</div></div><div class="id-type" style="background:${tb};border:1px solid ${tc}33;color:${tc}">${type}</div><div class="id-stats"><div class="id-stat"><div class="id-stat-l">Recorrido</div><div class="id-stat-v">${fmt(rec)}</div></div><div class="id-stat"><div class="id-stat-l">Retroceso</div><div class="id-stat-v">${fmt(ret)}</div></div><div class="id-stat"><div class="id-stat-l">Fórmula</div><div style="font-size:11px;font-weight:600;color:#6b7280;font-family:monospace">${fmt(ret)} ÷ ${fmt(rec)}</div></div></div>`;}
+let bd='0',bp=null,bo=null,bf=true;
+function bUpd(){const d=document.getElementById('bc-disp'),pv=document.getElementById('bc-prev');const v=parseFloat(bd);d.textContent=isNaN(v)?bd:v.toLocaleString('en-US',{maximumFractionDigits:10});d.style.fontSize=bd.length>12?'18px':'26px';pv.textContent=bp!==null&&bo?bp.toLocaleString('en-US',{maximumFractionDigits:6})+' '+bo:'';}
+function bIn(v){if(bf){bd=v==='.'?'0.':v;bf=false;}else{if(v==='.'&&bd.includes('.'))return;bd=bd==='0'&&v!=='.'?v:bd+v;}bUpd();}
+function bOp(op){const cur=parseFloat(bd);if(bp!==null&&bo&&!bf){let r;if(bo==='+')r=bp+cur;else if(bo==='-')r=bp-cur;else if(bo==='×')r=bp*cur;else if(bo==='÷')r=cur!==0?bp/cur:NaN;const rr=typeof r==='number'?parseFloat(r.toPrecision(12)):r;bd=String(rr);bp=typeof rr==='number'?rr:null;}else{bp=cur;}bo=op;bf=true;bUpd();}
+function bEq(){if(bo)bOp(null);}
+function bC(){bd='0';bp=null;bo=null;bf=true;bUpd();}
+function bNeg(){bd=String(parseFloat(bd)*-1);bUpd();}
+function bPct(){bd=String(parseFloat(bd)/100);bUpd();}
+</script>
+</body>
+</html>

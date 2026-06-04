@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Análisis — Elliott Wave</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Syne:wght@400;600;700;800;900&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07070e;--surface:#0d0d1a;--surface2:#111120;--border:#1a1a2e;
+  --gold:#f59e0b;--gold2:#fcd34d;--green:#10b981;--red:#ef4444;--purple:#a855f7;
+  --text:#e5e5e5;--muted:#555;--sub:#888;
+}
+body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:0}
+input,select,textarea{font-family:'Syne',sans-serif}
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+input[type=number]{-moz-appearance:textfield}
+
+/* HEADER */
+.header{background:linear-gradient(135deg,#0a0a18,#0f0f22,#0a0a18);border-bottom:1px solid var(--border);padding:20px 28px;display:flex;align-items:center;justify-content:space-between;gap:12;position:sticky;top:0;z-index:100}
+.header-left{display:flex;align-items:center;gap:14px}
+.header-icon{width:44px;height:44px;background:linear-gradient(135deg,#1a1500,#2a2000);border:1px solid var(--gold);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px}
+.header-title{font-size:18px;font-weight:900;color:var(--text);letter-spacing:-0.5px}
+.header-sub{font-size:11px;color:var(--muted);margin-top:2px;font-family:'JetBrains Mono',monospace}
+.header-badge{background:#1a1500;border:1px solid #3d3400;border-radius:8px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--gold);font-family:'JetBrains Mono',monospace}
+
+/* LAYOUT */
+.container{max-width:760px;margin:0 auto;padding:24px}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:16px;position:relative;overflow:hidden}
+.section::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),transparent)}
+.section-title{font-size:13px;font-weight:800;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.section-num{width:22px;height:22px;background:var(--gold);color:#000;font-size:10px;font-weight:900;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+
+/* FIELDS */
+.field-grid{display:grid;gap:10px}
+.field-grid.cols2{grid-template-columns:1fr 1fr}
+.field-grid.cols3{grid-template-columns:1fr 1fr 1fr}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.6px;text-transform:uppercase;font-family:'JetBrains Mono',monospace}
+.field input,.field select,.field textarea{background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);outline:none;transition:border .2s;font-family:'JetBrains Mono',monospace}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--gold)}
+.field select option{background:#111}
+.field textarea{resize:vertical;min-height:70px;font-size:12px;line-height:1.6}
+
+/* TOGGLE */
+.toggle-row{display:flex;gap:6px;flex-wrap:wrap}
+.toggle-opt{padding:7px 14px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;transition:all .2s;font-family:'JetBrains Mono',monospace}
+.toggle-opt.active-alc{background:#052e16;border-color:var(--green);color:var(--green)}
+.toggle-opt.active-baj{background:#1a0a0f;border-color:var(--red);color:var(--red)}
+.toggle-opt.active-gold{background:#1a1500;border-color:var(--gold);color:var(--gold)}
+.toggle-opt.active-purple{background:#1a0a2e;border-color:var(--purple);color:var(--purple)}
+
+/* CALCS */
+.calc-box{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:12px}
+.calc-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #111120}
+.calc-row:last-child{border-bottom:none}
+.calc-label{font-size:11px;color:var(--sub);font-family:'JetBrains Mono',monospace}
+.calc-val{font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace}
+.calc-val.gold{color:var(--gold)}
+.calc-val.green{color:var(--green)}
+.calc-val.red{color:var(--red)}
+.calc-val.purple{color:var(--purple)}
+.rb-badge{font-size:13px;font-weight:900;padding:8px 16px;border-radius:8px;margin-top:10px;text-align:center;font-family:'JetBrains Mono',monospace}
+.rb-good{background:#052e16;border:1px solid var(--green);color:var(--green)}
+.rb-bad{background:#1a0a0f;border:1px solid var(--red);color:var(--red)}
+.rb-ok{background:#1a1500;border:1px solid var(--gold);color:var(--gold)}
+
+/* CHECKLIST */
+.check-item{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:8px;border:1px solid var(--border);margin-bottom:6px;cursor:pointer;transition:all .2s;background:var(--surface2)}
+.check-item.checked{background:#052e16;border-color:#10b98133}
+.check-box{width:18px;height:18px;border-radius:5px;border:1.5px solid var(--muted);flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.check-item.checked .check-box{background:var(--green);border-color:var(--green)}
+.check-text{font-size:12px;color:var(--sub);line-height:1.5;flex:1}
+.check-item.checked .check-text{color:var(--text)}
+
+/* PLAN AB */
+.plan-box{border-radius:10px;padding:14px;border:1.5px solid}
+.plan-a{background:#052e1611;border-color:#10b98133}
+.plan-b{background:#1a0a0f11;border-color:#ef444433}
+.plan-title{font-size:11px;font-weight:800;letter-spacing:1px;margin-bottom:10px;font-family:'JetBrains Mono',monospace}
+.plan-title.a{color:var(--green)}
+.plan-title.b{color:var(--red)}
+
+/* DECISION */
+.decision{border-radius:12px;padding:18px;text-align:center;margin-top:16px;border:2px solid}
+.decision.go{background:#052e16;border-color:var(--green)}
+.decision.nogo{background:#1a0a0f;border-color:var(--red)}
+.decision.wait{background:#1a1500;border-color:var(--gold)}
+.decision-icon{font-size:32px;margin-bottom:8px}
+.decision-text{font-size:16px;font-weight:900;font-family:'JetBrains Mono',monospace}
+.decision-sub{font-size:11px;color:var(--sub);margin-top:4px}
+
+/* BTN */
+.btn-row{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.btn{padding:11px 20px;border-radius:9px;font-size:12px;font-weight:800;border:none;cursor:pointer;transition:all .2s;font-family:'Syne',sans-serif;letter-spacing:.3px}
+.btn-gold{background:var(--gold);color:#000}
+.btn-gold:hover{background:var(--gold2)}
+.btn-outline{background:transparent;border:1.5px solid var(--border);color:var(--muted)}
+.btn-outline:hover{border-color:var(--gold);color:var(--gold)}
+.btn-red{background:#1a0a0f;border:1.5px solid var(--red);color:var(--red)}
+
+/* PRINT */
+.print-area{display:none}
+@media print{
+  body{background:#fff;color:#000}
+  .header,.btn-row{display:none}
+  .print-area{display:block}
+  .section{border:1px solid #ccc;page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-icon">🔍</div>
+    <div>
+      <div class="header-title">Pre-Análisis de Trade</div>
+      <div class="header-sub">Elliott Wave • Fibonacci • Liquidez</div>
+    </div>
+  </div>
+  <div class="header-badge" id="h-date">—</div>
+</div>
+
+<div class="container">
+
+  <!-- 1. IDENTIFICACIÓN -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">1</div> Identificación</div>
+    <div class="field-grid cols3">
+      <div class="field">
+        <label>Activo</label>
+        <select id="activo" onchange="update()">
+          <option value="BTC">BTC — Bitcoin</option>
+          <option value="ETH">ETH — Ethereum</option>
+          <option value="ALT">Altcoin</option>
+          <option value="OTRO">Otro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="fecha" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Precio actual</label>
+        <input type="number" id="precio-actual" placeholder="63500" oninput="update()">
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. ANÁLISIS TOP-DOWN -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">2</div> Análisis Top-Down</div>
+    <div class="field-grid" style="margin-bottom:10px">
+      <div class="field">
+        <label>Mensual — ¿En qué onda del ciclo grande?</label>
+        <input type="text" id="td-mensual" placeholder="Ej: O4 en corrección ABC desde $128K" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Semanal — ¿Qué hacen las subondas?</label>
+        <input type="text" id="td-semanal" placeholder="Ej: ABC completando, C tocó 61.8% en $62,500" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Diario / 4H — ¿Señal de entrada?</label>
+        <input type="text" id="td-4h" placeholder="Ej: Martillo en 4H, no nuevo mínimo, volumen decreciente" oninput="update()">
+      </div>
+    </div>
+    <div class="field-grid cols2">
+      <div class="field">
+        <label>Onda a operar</label>
+        <div class="toggle-row" id="onda-toggle">
+          <div class="toggle-opt active-gold" onclick="setToggle('onda','O3',this)">O3</div>
+          <div class="toggle-opt" onclick="setToggle('onda','O5',this)">O5</div>
+          <div class="toggle-opt" onclick="setToggle('onda','C',this)">Onda C</div>
+          <div class="toggle-opt" onclick="setToggle('onda','OTRA',this)">Otra</div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Dirección</label>
+        <div class="toggle-row" id="dir-toggle">
+          <div class="toggle-opt active-alc" onclick="setToggle('dir','ALC',this)">📈 Alcista</div>
+          <div class="toggle-opt" onclick="setToggle('dir','BAJ',this)">📉 Bajista</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. FIBONACCI -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">3</div> Niveles Fibonacci</div>
+    <div class="field-grid cols3">
+      <div class="field">
+        <label>Inicio onda anterior</label>
+        <input type="number" id="fib-inicio" placeholder="16000" oninput="calcFib()">
+      </div>
+      <div class="field">
+        <label>Fin onda anterior</label>
+        <input type="number" id="fib-fin" placeholder="128000" oninput="calcFib()">
+      </div>
+      <div class="field">
+        <label>Base (fin O2 o fin O4)</label>
+        <input type="number" id="fib-base" placeholder="62500" oninput="calcFib()">
+      </div>
+    </div>
+    <div class="calc-box" id="fib-out" style="display:none"></div>
+    <div class="field" style="margin-top:10px">
+      <label>Zona Fibonacci de entrada</label>
+      <input type="text" id="fib-zona" placeholder="Ej: 50%-61.8% → $62,500-$61,000" oninput="update()">
+    </div>
+  </div>
+
+  <!-- 4. NÚMEROS DEL TRADE -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">4</div> Números del Trade</div>
+    <div class="field-grid cols3">
+      <div class="field">
+        <label>Entrada ($)</label>
+        <input type="number" id="entrada" placeholder="62500" oninput="calcTrade()">
+      </div>
+      <div class="field">
+        <label>Stop Loss ($)</label>
+        <input type="number" id="stop" placeholder="15999" oninput="calcTrade()">
+      </div>
+      <div class="field">
+        <label>Target ($)</label>
+        <input type="number" id="target" placeholder="128000" oninput="calcTrade()">
+      </div>
+    </div>
+    <div class="field-grid cols2" style="margin-top:10px">
+      <div class="field">
+        <label>Cuenta ($)</label>
+        <input type="number" id="cuenta" placeholder="10000" oninput="calcTrade()">
+      </div>
+      <div class="field">
+        <label>% Riesgo por trade</label>
+        <select id="riesgo-pct" onchange="calcTrade()">
+          <option value="0.5">0.5%</option>
+          <option value="1" selected>1%</option>
+          <option value="1.5">1.5%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+    </div>
+    <div class="calc-box" id="trade-out"></div>
+  </div>
+
+  <!-- 5. INVALIDACIÓN Y PLAN B -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">5</div> Plan A / Plan B</div>
+    <div class="field-grid" style="gap:12px">
+      <div class="plan-box plan-a">
+        <div class="plan-title a">✅ PLAN A — Conteo Principal</div>
+        <div class="field-grid">
+          <div class="field"><label>Descripción</label><input type="text" id="pa-desc" placeholder="O3 en curso, impulso alcista hacia $128K+" oninput="update()"></div>
+          <div class="field"><label>Invalidación Plan A ($)</label><input type="number" id="pa-inv" placeholder="15999" oninput="update()"></div>
+        </div>
+      </div>
+      <div class="plan-box plan-b">
+        <div class="plan-title b">❌ PLAN B — Si Plan A Falla</div>
+        <div class="field-grid">
+          <div class="field"><label>¿Qué estaría haciendo el mercado?</label><input type="text" id="pb-desc" placeholder="Corrección más profunda, O2 no terminó" oninput="update()"></div>
+          <div class="field"><label>Invalidación Plan B ($)</label><input type="number" id="pb-inv" placeholder="80" oninput="update()"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. CHECKLIST DE CONFIRMACIONES -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">6</div> Checklist de Confirmaciones</div>
+    <div id="checklist">
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">Fibonacci — precio en zona 50%-61.8% de la onda anterior</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">Estructura ABC completa — corrección terminada visualmente</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">R1 intacta — precio no ha violado inicio de O1</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">Señal en 4H — vela de reversión (martillo, engulfing, pin bar)</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">No nuevo mínimo — precio no hizo mínimo más bajo en últimas 2 velas 4H</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">Liquidez barrida — precio tocó zona de stops acumulados</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">R/B mínimo 1:2 — calculado y verificado</div>
+      </div>
+      <div class="check-item" onclick="toggleCheck(this)">
+        <div class="check-box">✓</div>
+        <div class="check-text">Plan B definido — tengo precio de invalidación alternativo</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--sub);font-family:'JetBrains Mono',monospace" id="check-score"></div>
+  </div>
+
+  <!-- 7. NOTAS Y DECISIÓN -->
+  <div class="section">
+    <div class="section-title"><div class="section-num">7</div> Notas y Decisión Final</div>
+    <div class="field" style="margin-bottom:12px">
+      <label>Observaciones adicionales</label>
+      <textarea id="notas" placeholder="Ej: BTC dominance cayendo, temporada de alts iniciando. Volumen decreciente en corrección. Confluencia con zona de liquidez en $62,500."></textarea>
+    </div>
+    <div id="decision-out"></div>
+    <div class="btn-row">
+      <button class="btn btn-gold" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+      <button class="btn btn-outline" onclick="resetForm()">🔄 Nuevo análisis</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const STATE = { onda:'O3', dir:'ALC' };
+
+// Fecha default
+document.getElementById('fecha').value = '2026-05-24';
+document.getElementById('h-date').textContent = '24 may. 2026';
+
+// Pre-fill ETH trade
+document.getElementById('activo').value = 'ETH';
+document.getElementById('precio-actual').value = '2100';
+document.getElementById('td-mensual').value = 'O3 en curso desde $880 — targets $8,627 / $13,415 — invalidación $885';
+document.getElementById('td-semanal').value = 'O1s=$880→$4,963 / O2s=$4,963→$1,741 (78%) / O3s en curso desde $1,741 — targets $8,347 / $12,430';
+document.getElementById('td-4h').value = 'ABC completo en O2d — A=$2,460→$2,250 / B=$2,250→$2,450 / C=$2,450→$2,007 — precio rebotando desde (C)';
+document.getElementById('fib-zona').value = 'O2d en 51% de O1d ($1,741→$2,460) — zona 50-61.8% ✅';
+document.getElementById('entrada').value = '2100';
+document.getElementById('stop').value = '1743';
+document.getElementById('target').value = '3170';
+document.getElementById('cuenta').value = '10000';
+document.getElementById('pa-desc').value = 'O3d en curso — impulso alcista desde $2,007 hacia $3,170 / $3,889';
+document.getElementById('pa-inv').value = '1743';
+document.getElementById('pb-desc').value = 'O2d no terminó — corrección más profunda, posible nuevo mínimo bajo $1,741';
+document.getElementById('pb-inv').value = '885';
+document.getElementById('notas').value = 'Conteo top-down completo: mensual O3 en curso / semanal O3s en curso / diario O2d terminada en 51% / 4H ABC completo. 3/3 condiciones M8.1 cumplidas. Posición abierta en demo.';
+
+function setToggle(key, val, el) {
+  STATE[key] = val;
+  const group = el.parentElement.querySelectorAll('.toggle-opt');
+  group.forEach(b => b.className = 'toggle-opt');
+  if(key==='dir') el.classList.add(val==='ALC'?'active-alc':'active-baj');
+  else if(key==='onda') el.classList.add('active-gold');
+  update();
+}
+
+function fmt(n) {
+  if(!n && n!==0) return '—';
+  return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2});
+}
+
+function calcFib() {
+  const ini = parseFloat(document.getElementById('fib-inicio').value);
+  const fin = parseFloat(document.getElementById('fib-fin').value);
+  const base = parseFloat(document.getElementById('fib-base').value);
+  const el = document.getElementById('fib-out');
+  if(!ini||!fin) { el.style.display='none'; return; }
+  const rec = Math.abs(fin-ini);
+  const alc = STATE.dir === 'ALC';
+  const ratios = [
+    {r:0.236,l:'23.6%'},{r:0.382,l:'38.2%'},{r:0.500,l:'50.0%'},
+    {r:0.618,l:'61.8%'},{r:0.786,l:'78.6%'},{r:1.000,l:'100%'}
+  ];
+  // Extension targets if base provided
+  const extRatios = [{r:1.0,l:'100%'},{r:1.272,l:'127.2%'},{r:1.618,l:'161.8%'},{r:2.618,l:'261.8%'}];
+  let h = '<div style="font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.5px;margin-bottom:8px;font-family:JetBrains Mono,monospace">RETROCESOS — Recorrido: '+fmt(rec)+'</div>';
+  ratios.forEach(f=>{
+    const p = alc ? fin-rec*f.r : fin+rec*f.r;
+    const hl = f.r===0.5||f.r===0.618;
+    h+=`<div class="calc-row"><span class="calc-label">${f.l}</span><span class="calc-val ${hl?'gold':''}">${fmt(p)}</span></div>`;
+  });
+  if(base) {
+    h+='<div style="font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.5px;margin:10px 0 8px;font-family:JetBrains Mono,monospace">EXTENSIONES DESDE BASE '+fmt(base)+'</div>';
+    extRatios.forEach(f=>{
+      const p = alc ? base+rec*f.r : base-rec*f.r;
+      const hl = f.r===1.618||f.r===2.618;
+      h+=`<div class="calc-row"><span class="calc-label">${f.l}</span><span class="calc-val ${hl?'purple':''}">${fmt(p)}</span></div>`;
+    });
+  }
+  el.innerHTML = h;
+  el.style.display = 'block';
+  update();
+}
+
+function calcTrade() {
+  const entrada = parseFloat(document.getElementById('entrada').value);
+  const stop = parseFloat(document.getElementById('stop').value);
+  const target = parseFloat(document.getElementById('target').value);
+  const cuenta = parseFloat(document.getElementById('cuenta').value);
+  const pct = parseFloat(document.getElementById('riesgo-pct').value)/100;
+  const el = document.getElementById('trade-out');
+  if(!entrada||!stop||!target) { el.innerHTML=''; return; }
+  const riesgoU = Math.abs(entrada-stop);
+  const benU = Math.abs(target-entrada);
+  const rb = benU/riesgoU;
+  let tamano = '', riesgoCuenta = '';
+  if(cuenta) {
+    const rPorTrade = cuenta*pct;
+    tamano = (rPorTrade/riesgoU).toFixed(4);
+    riesgoCuenta = fmt(rPorTrade);
+  }
+  let rbClass = rb>=3?'green':rb>=2?'gold':'red';
+  let rbLabel = rb>=3?'✅ ENTRADA A+':rb>=2?'⚡ ACEPTABLE':'❌ NO OPERAR';
+  el.innerHTML = `
+    <div class="calc-row"><span class="calc-label">Riesgo por unidad</span><span class="calc-val red">${fmt(riesgoU)}</span></div>
+    <div class="calc-row"><span class="calc-label">Beneficio potencial</span><span class="calc-val green">${fmt(benU)}</span></div>
+    <div class="calc-row"><span class="calc-label">Ratio R/B</span><span class="calc-val ${rbClass}">1:${rb.toFixed(1)}</span></div>
+    ${cuenta?`<div class="calc-row"><span class="calc-label">Riesgo en cuenta (${(pct*100)}%)</span><span class="calc-val gold">${riesgoCuenta}</span></div>`:''}
+    ${tamano?`<div class="calc-row"><span class="calc-label">Tamaño de posición</span><span class="calc-val purple">${tamano} unidades</span></div>`:''}
+    <div class="rb-badge rb-${rb>=3?'good':rb>=2?'ok':'bad'}">${rbLabel} — R/B 1:${rb.toFixed(1)}</div>
+  `;
+  update();
+}
+
+function toggleCheck(el) {
+  el.classList.toggle('checked');
+  const box = el.querySelector('.check-box');
+  box.style.color = el.classList.contains('checked') ? '#fff' : 'transparent';
+  updateCheckScore();
+  update();
+}
+
+function updateCheckScore() {
+  const items = document.querySelectorAll('.check-item');
+  const checked = document.querySelectorAll('.check-item.checked').length;
+  document.getElementById('check-score').textContent = `${checked}/${items.length} confirmaciones`;
+}
+
+function update() {
+  const checked = document.querySelectorAll('.check-item.checked').length;
+  const total = document.querySelectorAll('.check-item').length;
+  const entrada = parseFloat(document.getElementById('entrada').value);
+  const stop = parseFloat(document.getElementById('stop').value);
+  const target = parseFloat(document.getElementById('target').value);
+  const el = document.getElementById('decision-out');
+  if(!entrada||!stop||!target) { el.innerHTML=''; return; }
+  const rb = Math.abs(target-entrada)/Math.abs(entrada-stop);
+  let icon,text,sub,cls;
+  if(checked >= 6 && rb >= 2) {
+    icon='🟢'; text='TRADE VÁLIDO — EJECUTAR'; cls='go';
+    sub=`${checked}/${total} confirmaciones • R/B 1:${rb.toFixed(1)}`;
+  } else if(checked >= 4 && rb >= 2) {
+    icon='🟡'; text='PRECAUCIÓN — ESPERAR MÁS CONFIRMACIÓN'; cls='wait';
+    sub=`${checked}/${total} confirmaciones • Necesitas al menos 6`;
+  } else {
+    icon='🔴'; text='NO OPERAR — CONDICIONES INSUFICIENTES'; cls='nogo';
+    sub=`${checked}/${total} confirmaciones • R/B 1:${rb.toFixed(1)} ${rb<2?'— mínimo 1:2':''}`;
+  }
+  el.innerHTML=`<div class="decision ${cls}"><div class="decision-icon">${icon}</div><div class="decision-text">${text}</div><div class="decision-sub">${sub}</div></div>`;
+}
+
+function resetForm() {
+  if(!confirm('¿Limpiar todos los campos?')) return;
+  document.querySelectorAll('input,textarea').forEach(i=>i.value='');
+  document.querySelectorAll('.check-item').forEach(i=>{i.classList.remove('checked');i.querySelector('.check-box').style.color='transparent';});
+  document.getElementById('fib-out').style.display='none';
+  document.getElementById('trade-out').innerHTML='';
+  document.getElementById('decision-out').innerHTML='';
+  document.getElementById('check-score').textContent='';
+  document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
+}
+
+// Init
+updateCheckScore();
+document.querySelectorAll('.check-item .check-box').forEach(b=>b.style.color='transparent');
+
+// Auto-trigger calcs and check confirmed items
+calcFib();
+calcTrade();
+
+// Auto-check the 3 confirmed conditions
+const checks = document.querySelectorAll('.check-item');
+// Fibonacci ✅
+toggleCheck(checks[0]);
+// ABC completa ✅
+toggleCheck(checks[1]);
+// R1 intacta ✅
+toggleCheck(checks[2]);
+// R/B mínimo 1:2 ✅
+toggleCheck(checks[6]);
+// Plan B definido ✅
+toggleCheck(checks[7]);
+
+// Set onda and dir toggles
+STATE.onda = 'O3';
+STATE.dir = 'ALC';
+document.querySelector('#onda-toggle .toggle-opt').classList.add('active-gold');
+document.querySelector('#dir-toggle .toggle-opt').classList.add('active-alc');
+
+update();
+</script>
+</body>
+</html>
