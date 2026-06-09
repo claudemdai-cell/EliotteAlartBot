@@ -27,6 +27,23 @@ def start_scanner_thread():
     except Exception as e:
         print(f"[MAIN] Error iniciando scanner: {e}")
 
+
+def start_keepalive_thread():
+    """Hace ping a si mismo cada 10 min para evitar que Render duerma el servicio."""
+    import time, requests as req
+    def ping():
+        url = "https://eliottealartbot.onrender.com/health"
+        while True:
+            time.sleep(600)  # 10 minutos
+            try:
+                req.get(url, timeout=10)
+                print("[KEEPALIVE] ping ok")
+            except Exception as e:
+                print(f"[KEEPALIVE] error: {e}")
+    t = threading.Thread(target=ping, daemon=True)
+    t.start()
+    print("[MAIN] Keep-alive thread iniciado (ping cada 10 min).")
+
 # Clave secreta para validar que el webhook viene de TradingView
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "elliott2026")
 
@@ -104,4 +121,5 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     print(f"Elliott Alert Bot corriendo en puerto {port}")
     start_scanner_thread()
+    start_keepalive_thread()
     app.run(host="0.0.0.0", port=port, debug=False)
