@@ -1,6 +1,8 @@
 """
 Scanner autónomo — corre cada 4 horas sin TradingView.
-Obtiene datos OHLCV de Crypto.com y evalúa las 5 capas.
+- Analiza niveles Elliott dinamicamente con datos reales (90d)
+- Detecta cambios de panorama y envia alertas
+- Resumen diario a las 6AM
 """
 
 import time
@@ -11,93 +13,43 @@ from fibonacci import in_golden_zone
 from alerts import send_telegram
 from log import log_alert
 
-# Timezone offset UTC-5 (Colombia, Peru, Ecuador, Mexico CDT)
-# Cambiar a -3 para Argentina, -6 para Mexico CST
+# Timezone offset — cambia segun tu pais
+# -5 = Colombia, Peru, Ecuador | -3 = Argentina | -6 = Mexico CST
 UTC_OFFSET_HOURS = -5
-DAILY_SUMMARY_HOUR = 6  # 6:00 AM hora local
-
-# Activos a monitorear con sus niveles Elliott actuales
-# Actualizar wave_start/wave_end manualmente cuando cambie el conteo
-WATCHLIST = [
-    {
-        "asset": "BTCUSD",
-        "symbol": "BTC_USDT",
-        "wave_start": 60171,   # inicio O1 diario
-        "wave_end":   76013,   # fin O1 diario
-        "stop":       59800,   # invalidación bajo mínimo
-        "target":     95000,   # extensión 161.8%
-        "in_elliott_zone": True,
-    },
-    {
-        "asset": "ETHUSD",
-        "symbol": "ETH_USDT",
-        "wave_start": 1741,    # inicio O1d
-        "wave_end":   2460,    # fin O1d
-        "stop":       1720,    # invalidación
-        "target":     4000,    # target O3
-        "in_elliott_zone": True,
-    },
-    {
-        "asset": "LINKUSD",
-        "symbol": "LINK_USDT",
-        "wave_start": 6.999,   # mínimo 90d — base del impulso
-        "wave_end":   10.867,  # máximo 90d — fin O1
-        "stop":       6.80,    # invalidación bajo mínimo
-        "target":     13.25,   # extensión 161.8% desde wave_start
-        "in_elliott_zone": True,
-    },
-    {
-        "asset": "SOLUSD",
-        "symbol": "SOL_USDT",
-        "wave_start": 60.11,   # mínimo 90d — base del impulso
-        "wave_end":   98.40,   # máximo 90d — fin O1
-        "stop":       58.50,   # invalidación bajo mínimo
-        "target":     122.00,  # extensión 161.8% desde wave_start
-        "in_elliott_zone": True,
-    },
-    {
-        "asset": "JASMYUSD",
-        "symbol": "JASMY_USDT",
-        "wave_start": 0.0043,  # mínimo 90d — base del impulso
-        "wave_end":   0.0078,  # máximo 90d — fin O1
-        "stop":       0.0041,  # invalidación bajo mínimo
-        "target":     0.0100,  # extensión 161.8% desde wave_start
-        "in_elliott_zone": True,
-    },
-]
+DAILY_SUMMARY_HOUR = 6   # 6:00 AM hora local
+ANALYSIS_INTERVAL_DAYS = 7  # Re-analizar niveles cada 7 dias
 
 CRYPTO_API = "https://api.crypto.com/exchange/v1/public"
 
+# Watchlist base — los niveles se actualizan automaticamente
+WATCHLIST = [
+    {"asset": "BTCUSD",   "symbol": "BTC_USDT"},
+    {"asset": "ETHUSD",   "symbol": "ETH_USDT"},
+    {"asset": "LINKUSD",  "symbol": "LINK_USDT"},
+    {"asset": "SOLUSD",   "symbol": "SOL_USDT"},
+    {"asset": "JASMYUSD", "symbol": "JASMY_USDT"},
+]
 
-def get_ohlcv(symbol: str, timeframe: str = "4h", limit: int = 25) -> list:
-    """Obtiene velas OHLCV de Crypto.com."""
+# Estado dinamico — se actualiza con cada analisis
+# { "BTCUSD": { wave_start, wave_end, stop, target, trend, last_analyzed } }
+DYNAMIC_STATE = {}
+
+
+# ─── DATA ────────────────────────────────────────────────────────────────────
+
+def get_ohlcv(symbol: str, timeframe: str = "4h", limit: int = 100) -> list:
     url = f"{CRYPTO_API}/get-candlestick"
     params = {"instrument_name": symbol, "timeframe": timeframe, "count": limit}
     try:
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
-        data = r.json()
-        return data.get("result", {}).get("data", [])
+        return r.json().get("result", {}).get("data", [])
     except Exception as e:
-        print(f"[SCANNER] Error obteniendo {symbol}: {e}")
+        print(f"[SCANNER] Error {symbol}: {e}")
         return []
 
 
-def get_ticker(symbol: str) -> dict:
-    """Obtiene ticker actual."""
-    url = f"{CRYPTO_API}/get-ticker"
-    params = {"instrument_name": symbol}
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        return r.json().get("result", {}).get("data", [{}])[0]
-    except Exception as e:
-        print(f"[SCANNER] Error ticker {symbol}: {e}")
-        return {}
-
-
 def compute_rsi(closes: list, period: int = 14) -> float:
-    """RSI simple."""
     if len(closes) < period + 1:
         return 50.0
     deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
@@ -110,7 +62,6 @@ def compute_rsi(closes: list, period: int = 14) -> float:
 
 
 def compute_ema(closes: list, period: int = 21) -> float:
-    """EMA simple."""
     if len(closes) < period:
         return closes[-1] if closes else 0.0
     k = 2 / (period + 1)
@@ -120,173 +71,346 @@ def compute_ema(closes: list, period: int = 21) -> float:
     return round(ema, 4)
 
 
-def get_asset_status(cfg: dict) -> dict | None:
-    """Escanea un activo y retorna su estado sin enviar alerta."""
-    symbol = cfg["symbol"]
-    candles = get_ohlcv(symbol, "4h", 25)
-    if len(candles) < 21:
-        return None
+# ─── ANALISIS DINAMICO ────────────────────────────────────────────────────────
 
-    opens   = [float(c['o']) for c in candles]
-    highs   = [float(c['h']) for c in candles]
-    lows    = [float(c['l']) for c in candles]
-    closes  = [float(c['c']) for c in candles]
-    volumes = [float(c['v']) for c in candles]
+def analyze_levels(symbol: str, asset: str) -> dict:
+    """
+    Calcula automaticamente los niveles Elliott desde datos reales.
+    Usa velas diarias de los ultimos 90 dias para identificar:
+    - wave_start: minimo del periodo (soporte estructural)
+    - wave_end: maximo del periodo (resistencia / fin de impulso)
+    - trend: alcista / bajista / lateral
+    - stop, target con Fibonacci
+    """
+    candles_1d = get_ohlcv(symbol, "1D", 90)
+    if len(candles_1d) < 30:
+        return {}
 
-    rsi      = compute_rsi(closes)
-    ema21    = compute_ema(closes, 21)
-    vol_avg5  = sum(volumes[-5:]) / 5
-    vol_avg20 = sum(volumes[-20:]) / 20
+    highs  = [float(c['h']) for c in candles_1d]
+    lows   = [float(c['l']) for c in candles_1d]
+    closes = [float(c['c']) for c in candles_1d]
 
-    payload = WebhookPayload(
-        asset=cfg["asset"], price=closes[-1],
-        open_4h=opens[-1], close_4h=closes[-1],
-        high_4h=highs[-1], low_4h=lows[-1],
-        rsi_4h=rsi, volume_avg5=vol_avg5, volume_avg20=vol_avg20,
-        ema21_4h=ema21, in_elliott_zone=cfg["in_elliott_zone"],
-        wave_start=cfg["wave_start"], wave_end=cfg["wave_end"],
-    )
-    result = evaluate_layers(payload)
+    max_high = max(highs)
+    min_low  = min(lows)
+    last_price = closes[-1]
 
-    # Calcular distancia al golden zone
-    ws, we = cfg["wave_start"], cfg["wave_end"]
-    rng = abs(we - ws)
-    gz_low  = we - rng * 0.618
-    gz_high = we - rng * 0.500
-    dist_pct = ((closes[-1] - gz_low) / gz_low) * 100
+    # Determinar tendencia con EMA50 diaria
+    ema50 = compute_ema(closes, 50) if len(closes) >= 50 else compute_ema(closes, len(closes))
+    ema20 = compute_ema(closes, 20)
+
+    # Posicion del precio relativa al rango
+    rng = max_high - min_low
+    position_pct = (last_price - min_low) / rng * 100 if rng > 0 else 50
+
+    # Tendencia
+    if last_price > ema50 and ema20 > ema50:
+        trend = "alcista"
+    elif last_price < ema50 and ema20 < ema50:
+        trend = "bajista"
+    else:
+        trend = "lateral"
+
+    # En tendencia alcista: wave_start = minimo, wave_end = maximo
+    # En bajista: invertimos para buscar rebote desde soporte
+    wave_start = min_low
+    wave_end   = max_high
+
+    # Calcular golden zone (retroceso desde max al min)
+    gz_low  = wave_end - rng * 0.618
+    gz_high = wave_end - rng * 0.500
+
+    # Stop: 2% bajo el minimo
+    stop   = round(min_low * 0.98, 6)
+    # Target: extension 161.8% desde el minimo
+    target = round(min_low + rng * 1.618, 6)
+
+    # RSI actual
+    rsi_4h_candles = get_ohlcv(symbol, "4h", 25)
+    rsi = 50.0
+    if rsi_4h_candles:
+        closes_4h = [float(c['c']) for c in rsi_4h_candles]
+        rsi = compute_rsi(closes_4h)
 
     return {
-        "asset": cfg["asset"],
-        "price": closes[-1],
-        "score": result["score"],
-        "rsi": rsi,
-        "gz_low": gz_low,
-        "gz_high": gz_high,
-        "dist_pct": dist_pct,
-        "in_zone": in_golden_zone(closes[-1], ws, we),
-        "target": cfg["target"],
-        "stop": cfg["stop"],
-        "result": result,
-        "payload": payload,
+        "wave_start":    round(wave_start, 6),
+        "wave_end":      round(wave_end, 6),
+        "stop":          stop,
+        "target":        target,
+        "gz_low":        round(gz_low, 6),
+        "gz_high":       round(gz_high, 6),
+        "trend":         trend,
+        "position_pct":  round(position_pct, 1),
+        "rsi":           rsi,
+        "last_price":    last_price,
+        "max_90d":       round(max_high, 6),
+        "min_90d":       round(min_low, 6),
+        "last_analyzed": datetime.datetime.utcnow().isoformat(),
     }
 
 
-def send_daily_summary() -> None:
-    """Envia resumen diario de todos los activos a las 6AM."""
-    lines = ["*Resumen Diario Elliott Bot*", f"_{datetime.datetime.utcnow().strftime('%Y-%m-%d')} | 6:00 AM_", ""]
+def detect_panorama_change(asset: str, old: dict, new: dict) -> list:
+    """
+    Compara analisis anterior con el nuevo.
+    Retorna lista de cambios importantes detectados.
+    """
+    changes = []
+    if not old:
+        return changes
 
-    for cfg in WATCHLIST:
-        s = get_asset_status(cfg)
-        if not s:
-            continue
+    price = new["last_price"]
 
-        score = s["score"]
-        # Barra visual del score
-        bar = "█" * score + "░" * (5 - score)
+    # 1. Nuevo minimo historico (invalidacion)
+    if new["min_90d"] < old["min_90d"] * 0.97:
+        pct = ((new["min_90d"] - old["min_90d"]) / old["min_90d"]) * 100
+        changes.append(f"NUEVO MINIMO 90d: {new['min_90d']} (cambio {pct:.1f}%)")
 
-        if s["in_zone"]:
-            zone_txt = "EN ZONA"
-        elif s["dist_pct"] < 0:
-            zone_txt = f"Falta {abs(s['dist_pct']):.1f}% para zona"
-        else:
-            zone_txt = f"Sobre zona +{s['dist_pct']:.1f}%"
+    # 2. Nuevo maximo historico (momentum alcista)
+    if new["max_90d"] > old["max_90d"] * 1.03:
+        pct = ((new["max_90d"] - old["max_90d"]) / old["max_90d"]) * 100
+        changes.append(f"NUEVO MAXIMO 90d: {new['max_90d']} (+{pct:.1f}%)")
 
-        # Emoji segun score
-        if score >= 4:
-            emoji = "ALERTA"
-        elif score == 3:
-            emoji = "Calentando"
-        else:
-            emoji = "Esperando"
+    # 3. Cambio de tendencia
+    if old.get("trend") and new["trend"] != old["trend"]:
+        changes.append(f"CAMBIO DE TENDENCIA: {old['trend']} -> {new['trend']}")
 
-        lines.append(
-            f"*{s['asset']}* [{bar}] {score}/5 - {emoji}\n"
-            f"  Precio: `{s['price']}` | RSI: `{s['rsi']:.0f}`\n"
-            f"  Zona: `{s['gz_low']:.4f}` - `{s['gz_high']:.4f}` | {zone_txt}\n"
-            f"  Target: `{s['target']}` | Stop: `{s['stop']}`"
-        )
+    # 4. Precio entro en golden zone
+    was_in_zone = in_golden_zone(old["last_price"], old["wave_start"], old["wave_end"])
+    now_in_zone = in_golden_zone(price, new["wave_start"], new["wave_end"])
+    if now_in_zone and not was_in_zone:
+        changes.append(f"ENTRO EN GOLDEN ZONE ({new['gz_low']:.4f} - {new['gz_high']:.4f})")
+
+    # 5. Precio rompio soporte (bajo wave_start)
+    if price < new["wave_start"]:
+        changes.append(f"ROMPIO SOPORTE: precio {price} bajo minimo {new['wave_start']}")
+
+    # 6. Precio rompio resistencia (sobre wave_end)
+    if price > new["wave_end"]:
+        changes.append(f"ROMPIO RESISTENCIA: precio {price} sobre maximo {new['wave_end']}")
+
+    return changes
+
+
+def send_analysis_update(asset: str, levels: dict, changes: list) -> None:
+    """Envia alerta de cambio de panorama al Telegram."""
+    trend_emoji = {"alcista": "Alcista", "bajista": "Bajista", "lateral": "Lateral"}.get(levels["trend"], "?")
+    gz_dist = ((levels["last_price"] - levels["gz_low"]) / levels["gz_low"]) * 100
+
+    if gz_dist < 0:
+        zona_txt = f"Falta {abs(gz_dist):.1f}% para entrar"
+    elif in_golden_zone(levels["last_price"], levels["wave_start"], levels["wave_end"]):
+        zona_txt = "EN ZONA AHORA"
+    else:
+        zona_txt = f"Sobre zona +{gz_dist:.1f}%"
+
+    lines = [
+        f"*Actualizacion de Analisis: {asset}*",
+        "",
+    ]
+
+    if changes:
+        lines.append("*Cambios detectados:*")
+        for c in changes:
+            lines.append(f"  - {c}")
+        lines.append("")
+
+    lines += [
+        f"*Panorama actual:* {trend_emoji}",
+        f"Precio: `{levels['last_price']}` | RSI: `{levels['rsi']:.0f}`",
+        f"Rango 90d: `{levels['min_90d']}` - `{levels['max_90d']}`",
+        f"Golden Zone: `{levels['gz_low']:.4f}` - `{levels['gz_high']:.4f}`",
+        f"Estado: {zona_txt}",
+        f"Stop: `{levels['stop']}` | Target: `{levels['target']}`",
+    ]
 
     send_telegram("\n".join(lines))
 
 
-def scan_asset(cfg: dict) -> None:
-    symbol = cfg["symbol"]
-    candles = get_ohlcv(symbol, "4h", 25)
+# ─── SCAN ─────────────────────────────────────────────────────────────────────
 
+def scan_asset(cfg: dict) -> None:
+    asset  = cfg["asset"]
+    symbol = cfg["symbol"]
+    state  = DYNAMIC_STATE.get(asset, {})
+
+    candles = get_ohlcv(symbol, "4h", 25)
     if len(candles) < 21:
         print(f"[SCANNER] {symbol}: datos insuficientes")
         return
 
-    # Crypto.com devuelve {"o": open, "h": high, "l": low, "c": close, "v": volume, "t": time}
     opens   = [float(c['o']) for c in candles]
     highs   = [float(c['h']) for c in candles]
     lows    = [float(c['l']) for c in candles]
     closes  = [float(c['c']) for c in candles]
     volumes = [float(c['v']) for c in candles]
 
-    last_open   = opens[-1]
-    last_close  = closes[-1]
-    last_high   = highs[-1]
-    last_low    = lows[-1]
-
-    rsi     = compute_rsi(closes)
-    ema21   = compute_ema(closes, 21)
+    rsi       = compute_rsi(closes)
+    ema21     = compute_ema(closes, 21)
     vol_avg5  = sum(volumes[-5:]) / 5
     vol_avg20 = sum(volumes[-20:]) / 20
 
+    # Usar niveles dinamicos si existen, si no usar defaults del 90d
+    wave_start = state.get("wave_start", min(lows))
+    wave_end   = state.get("wave_end",   max(highs))
+    stop       = state.get("stop",       min(lows) * 0.98)
+    target     = state.get("target",     max(highs) * 1.5)
+
     payload = WebhookPayload(
-        asset            = cfg["asset"],
-        price            = last_close,
-        open_4h          = last_open,
-        close_4h         = last_close,
-        high_4h          = last_high,
-        low_4h           = last_low,
-        rsi_4h           = rsi,
-        volume_avg5      = vol_avg5,
-        volume_avg20     = vol_avg20,
-        ema21_4h         = ema21,
-        in_elliott_zone  = cfg["in_elliott_zone"],
-        wave_start       = cfg["wave_start"],
-        wave_end         = cfg["wave_end"],
+        asset=asset, price=closes[-1],
+        open_4h=opens[-1], close_4h=closes[-1],
+        high_4h=highs[-1], low_4h=lows[-1],
+        rsi_4h=rsi, volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        ema21_4h=ema21, in_elliott_zone=True,
+        wave_start=wave_start, wave_end=wave_end,
     )
 
     result = evaluate_layers(payload)
     score  = result["score"]
     layers_passed = [k for k, v in result["layers"].items() if v.passed]
 
-    print(f"[SCANNER] {cfg['asset']} | Score: {score}/5 | RSI: {rsi} | Price: {last_close}")
+    print(f"[SCANNER] {asset} | Score: {score}/5 | RSI: {rsi:.1f} | Price: {closes[-1]}")
 
     sent = False
     if score >= 4:
-        text = format_alert_text(payload, result, cfg["stop"], cfg["target"])
+        text = format_alert_text(payload, result, stop, target)
         sent = send_telegram(text)
 
-    log_alert(cfg["asset"], score, last_close, cfg["stop"], cfg["target"], layers_passed, sent)
+    log_alert(asset, score, closes[-1], stop, target, layers_passed, sent)
 
+
+# ─── RESUMEN DIARIO ───────────────────────────────────────────────────────────
+
+def send_daily_summary() -> None:
+    """Envia resumen diario de todos los activos a las 6AM."""
+    date_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)).strftime("%Y-%m-%d")
+    lines = [f"*Resumen Diario Elliott Bot*", f"_{date_str} | 6:00 AM_", ""]
+
+    for cfg in WATCHLIST:
+        asset  = cfg["asset"]
+        symbol = cfg["symbol"]
+        state  = DYNAMIC_STATE.get(asset, {})
+
+        candles = get_ohlcv(symbol, "4h", 25)
+        if len(candles) < 21:
+            continue
+
+        closes  = [float(c['c']) for c in candles]
+        volumes = [float(c['v']) for c in candles]
+        rsi = compute_rsi(closes)
+        vol5 = sum(volumes[-5:]) / 5
+        vol20 = sum(volumes[-20:]) / 20
+
+        price      = closes[-1]
+        wave_start = state.get("wave_start", min([float(c['l']) for c in candles]))
+        wave_end   = state.get("wave_end",   max([float(c['h']) for c in candles]))
+        target     = state.get("target", wave_end * 1.5)
+        stop       = state.get("stop", wave_start * 0.98)
+        trend      = state.get("trend", "?")
+        gz_low     = wave_end - abs(wave_end - wave_start) * 0.618
+        gz_high    = wave_end - abs(wave_end - wave_start) * 0.500
+        dist_pct   = ((price - gz_low) / gz_low) * 100
+
+        # Score rapido
+        ema21 = compute_ema(closes, 21)
+        payload = WebhookPayload(
+            asset=asset, price=price,
+            open_4h=float(candles[-1]['o']), close_4h=price,
+            high_4h=float(candles[-1]['h']), low_4h=float(candles[-1]['l']),
+            rsi_4h=rsi, volume_avg5=vol5, volume_avg20=vol20,
+            ema21_4h=ema21, in_elliott_zone=True,
+            wave_start=wave_start, wave_end=wave_end,
+        )
+        score = evaluate_layers(payload)["score"]
+        bar   = chr(9608) * score + chr(9617) * (5 - score)
+
+        if in_golden_zone(price, wave_start, wave_end):
+            zona_txt = "EN ZONA"
+        elif dist_pct < 0:
+            zona_txt = f"Falta {abs(dist_pct):.1f}% para zona"
+        else:
+            zona_txt = f"Sobre zona +{dist_pct:.1f}%"
+
+        estado = "ALERTA" if score >= 4 else ("Calentando" if score == 3 else "Esperando")
+        trend_txt = f" | {trend}" if trend != "?" else ""
+
+        lines.append(
+            f"*{asset}* [{bar}] {score}/5 - {estado}{trend_txt}\n"
+            f"  Precio: `{price}` | RSI: `{rsi:.0f}`\n"
+            f"  Zona: `{gz_low:.4f}` - `{gz_high:.4f}` | {zona_txt}\n"
+            f"  Target: `{target}` | Stop: `{stop}`"
+        )
+
+    send_telegram("\n".join(lines))
+
+
+# ─── ANALISIS SEMANAL ─────────────────────────────────────────────────────────
+
+def run_weekly_analysis(force: bool = False) -> None:
+    """
+    Re-analiza todos los activos con datos reales de 90 dias.
+    Detecta cambios de panorama y actualiza DYNAMIC_STATE.
+    Se ejecuta cada 7 dias (o al inicio).
+    """
+    print("[ANALYSIS] Ejecutando analisis semanal...")
+
+    for cfg in WATCHLIST:
+        asset  = cfg["asset"]
+        symbol = cfg["symbol"]
+        old    = DYNAMIC_STATE.get(asset, {})
+
+        new = analyze_levels(symbol, asset)
+        if not new:
+            print(f"[ANALYSIS] {asset}: sin datos")
+            continue
+
+        changes = detect_panorama_change(asset, old, new)
+        DYNAMIC_STATE[asset] = new
+
+        print(f"[ANALYSIS] {asset}: trend={new['trend']} | pos={new['position_pct']}% del rango | cambios={len(changes)}")
+
+        # Notificar si hay cambios importantes O si es el primer analisis
+        if changes or not old:
+            send_analysis_update(asset, new, changes)
+            time.sleep(1)
+
+    print("[ANALYSIS] Analisis completado.")
+
+
+# ─── LOOP PRINCIPAL ───────────────────────────────────────────────────────────
 
 def run_scanner(interval_hours: int = 4) -> None:
-    """Loop principal — corre cada 4 horas. Resumen diario a las 6AM."""
-    print(f"[SCANNER] Iniciando. Revisando cada {interval_hours}h.")
-    send_telegram("*Elliott Scanner iniciado* — revisando cada 4h. Resumen diario a las 6AM.")
+    """Loop principal — corre cada 4 horas."""
+    print(f"[SCANNER] Iniciando. Scan cada {interval_hours}h | Resumen 6AM | Analisis semanal.")
+    send_telegram("*Elliott Scanner iniciado*\nScan cada 4h | Resumen 6AM | Analisis semanal automatico.")
 
-    last_summary_day = None  # Evita enviar mas de 1 resumen por dia
+    last_summary_day  = None
+    last_analysis_day = None
+
+    # Analisis inicial al arrancar
+    run_weekly_analysis(force=True)
 
     while True:
-        # Calcular hora local
-        utc_now = datetime.datetime.utcnow()
+        utc_now   = datetime.datetime.utcnow()
         local_now = utc_now + datetime.timedelta(hours=UTC_OFFSET_HOURS)
-        today = local_now.date()
+        today     = local_now.date()
 
-        # Enviar resumen diario si es hora 6AM y no se envio hoy
+        # Resumen diario a las 6AM
         if local_now.hour == DAILY_SUMMARY_HOUR and last_summary_day != today:
-            print(f"[SCANNER] Enviando resumen diario ({local_now.strftime('%H:%M')} local)")
+            print(f"[SCANNER] Resumen diario ({local_now.strftime('%H:%M')} local)")
             send_daily_summary()
             last_summary_day = today
 
-        print(f"\n[SCANNER] --- Scan {local_now.strftime('%Y-%m-%d %H:%M')} local ---")
+        # Analisis semanal (lunes a las 7AM o cada 7 dias)
+        days_since = (today - last_analysis_day).days if last_analysis_day else 999
+        if days_since >= ANALYSIS_INTERVAL_DAYS:
+            run_weekly_analysis()
+            last_analysis_day = today
+
+        # Scan normal cada 4h
+        print(f"\n[SCANNER] --- Scan {local_now.strftime('%Y-%m-%d %H:%M')} ---")
         for cfg in WATCHLIST:
             scan_asset(cfg)
             time.sleep(2)
+
         print(f"[SCANNER] Esperando {interval_hours}h...")
         time.sleep(interval_hours * 3600)
 
