@@ -12,12 +12,17 @@ from layers import WebhookPayload, evaluate_layers, format_alert_text
 from fibonacci import in_golden_zone
 from alerts import send_telegram
 from log import log_alert
+from gem_hunter import run_gem_scan, send_gem_report
 
 # Timezone offset — cambia segun tu pais
 # -5 = Colombia, Peru, Ecuador | -3 = Argentina | -6 = Mexico CST
 UTC_OFFSET_HOURS = -5
 DAILY_SUMMARY_HOUR = 6   # 6:00 AM hora local
-ANALYSIS_INTERVAL_DAYS = 7  # Re-analizar niveles cada 7 dias
+ANALYSIS_INTERVAL_DAYS = 7   # Re-analizar niveles cada 7 dias
+GEM_SCAN_INTERVAL_DAYS = 3   # Gem scan cada 3 dias
+
+# Cache de gems previas para detectar novedades
+_prev_gems: dict = {}  # { symbol: gem_data }
 
 CRYPTO_API = "https://api.crypto.com/exchange/v1/public"
 
@@ -384,6 +389,7 @@ def run_scanner(interval_hours: int = 4) -> None:
 
     last_summary_day  = None
     last_analysis_day = None
+    last_gem_day      = None
 
     # Analisis inicial al arrancar
     run_weekly_analysis(force=True)
@@ -399,11 +405,33 @@ def run_scanner(interval_hours: int = 4) -> None:
             send_daily_summary()
             last_summary_day = today
 
-        # Analisis semanal (lunes a las 7AM o cada 7 dias)
-        days_since = (today - last_analysis_day).days if last_analysis_day else 999
-        if days_since >= ANALYSIS_INTERVAL_DAYS:
+        # Analisis semanal de niveles Elliott
+        days_since_analysis = (today - last_analysis_day).days if last_analysis_day else 999
+        if days_since_analysis >= ANALYSIS_INTERVAL_DAYS:
             run_weekly_analysis()
             last_analysis_day = today
+
+        # Gem scan cada 3 dias
+        days_since_gem = (today - last_gem_day).days if last_gem_day else 999
+        if days_since_gem >= GEM_SCAN_INTERVAL_DAYS:
+            print("[SCANNER] Iniciando Gem Scan...")
+            watchlist_set = {cfg["asset"] for cfg in WATCHLIST}
+            gems = run_gem_scan(watchlist_assets=watchlist_set)
+            # Detectar nuevas gems vs scan anterior
+            new_gems = [g for g in gems if g["symbol"] not in _prev_gems]
+            # Auto-agregar gems 💎 y 🔥 al watchlist si no estan
+            for g in gems:
+                if g["emoji"] in ("💎", "🔥") and not g.get("in_watchlist"):
+                    asset_name = g["asset"] + "USD"
+                    if not any(c["asset"] == asset_name for c in WATCHLIST):
+                        WATCHLIST.append({
+                            "asset":  asset_name,
+                            "symbol": g["symbol"],
+                        })
+                        print(f"[GEM] {g['emoji']} {asset_name} agregado al watchlist automaticamente")
+            send_gem_report(gems, new_gems=new_gems if new_gems else None)
+            _prev_gems.update({g["symbol"]: g for g in gems})
+            last_gem_day = today
 
         # Scan normal cada 4h
         print(f"\n[SCANNER] --- Scan {local_now.strftime('%Y-%m-%d %H:%M')} ---")
