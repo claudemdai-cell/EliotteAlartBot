@@ -94,12 +94,12 @@ def scan_asset(cfg: dict) -> None:
         print(f"[SCANNER] {symbol}: datos insuficientes")
         return
 
-    # Crypto.com devuelve [t, o, h, l, c, v]
-    opens   = [float(c[1]) for c in candles]
-    highs   = [float(c[2]) for c in candles]
-    lows    = [float(c[3]) for c in candles]
-    closes  = [float(c[4]) for c in candles]
-    volumes = [float(c[5]) for c in candles]
+    # Crypto.com devuelve {"o": open, "h": high, "l": low, "c": close, "v": volume, "t": time}
+    opens   = [float(c['o']) for c in candles]
+    highs   = [float(c['h']) for c in candles]
+    lows    = [float(c['l']) for c in candles]
+    closes  = [float(c['c']) for c in candles]
+    volumes = [float(c['v']) for c in candles]
 
     last_open   = opens[-1]
     last_close  = closes[-1]

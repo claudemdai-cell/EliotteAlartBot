@@ -3,7 +3,7 @@ services:
     name: elliott-alert-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot/scanner.py
+    startCommand: cd bot && python scanner.py
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
