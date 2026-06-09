@@ -17,7 +17,7 @@ WATCHLIST = [
         "symbol": "BTC_USDT",
         "wave_start": 60171,   # inicio O1 diario
         "wave_end":   76013,   # fin O1 diario
-        "stop":       60171,   # invalidación R3
+        "stop":       59800,   # invalidación bajo mínimo
         "target":     95000,   # extensión 161.8%
         "in_elliott_zone": True,
     },
@@ -26,8 +26,35 @@ WATCHLIST = [
         "symbol": "ETH_USDT",
         "wave_start": 1741,    # inicio O1d
         "wave_end":   2460,    # fin O1d
-        "stop":       1740,    # invalidación
+        "stop":       1720,    # invalidación
         "target":     4000,    # target O3
+        "in_elliott_zone": True,
+    },
+    {
+        "asset": "LINKUSD",
+        "symbol": "LINK_USDT",
+        "wave_start": 6.999,   # mínimo 90d — base del impulso
+        "wave_end":   10.867,  # máximo 90d — fin O1
+        "stop":       6.80,    # invalidación bajo mínimo
+        "target":     13.25,   # extensión 161.8% desde wave_start
+        "in_elliott_zone": True,
+    },
+    {
+        "asset": "SOLUSD",
+        "symbol": "SOL_USDT",
+        "wave_start": 60.11,   # mínimo 90d — base del impulso
+        "wave_end":   98.40,   # máximo 90d — fin O1
+        "stop":       58.50,   # invalidación bajo mínimo
+        "target":     122.00,  # extensión 161.8% desde wave_start
+        "in_elliott_zone": True,
+    },
+    {
+        "asset": "JASMYUSD",
+        "symbol": "JASMY_USDT",
+        "wave_start": 0.0043,  # mínimo 90d — base del impulso
+        "wave_end":   0.0078,  # máximo 90d — fin O1
+        "stop":       0.0041,  # invalidación bajo mínimo
+        "target":     0.0100,  # extensión 161.8% desde wave_start
         "in_elliott_zone": True,
     },
 ]
