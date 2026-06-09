@@ -8,12 +8,24 @@ Endpoint: POST /webhook
 """
 
 import os
+import threading
 from flask import Flask, request, jsonify
 from layers import WebhookPayload, evaluate_layers, format_alert_text
 from alerts import send_telegram
 from log import log_alert
 
 app = Flask(__name__)
+
+
+def start_scanner_thread():
+    """Lanza el scanner autónomo en un thread background."""
+    try:
+        from scanner import run_scanner
+        t = threading.Thread(target=run_scanner, daemon=True)
+        t.start()
+        print("[MAIN] Scanner background thread iniciado.")
+    except Exception as e:
+        print(f"[MAIN] Error iniciando scanner: {e}")
 
 # Clave secreta para validar que el webhook viene de TradingView
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "elliott2026")
@@ -91,4 +103,5 @@ def test_telegram():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     print(f"Elliott Alert Bot corriendo en puerto {port}")
+    start_scanner_thread()
     app.run(host="0.0.0.0", port=port, debug=False)
