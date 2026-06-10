@@ -248,20 +248,33 @@ def signal_buttons(sig: dict) -> list:
       [✅ Entré] [🚫 Paso]
       [🔄 ¿Sigue válida?]
       [📋 Target ...] [📋 Stop ...]
-    Los botones 📋 copian el numero crudo al portapapeles (para pegar en Coinbase).
+    Los botones 📋 copian el numero con los decimales exactos que acepta Coinbase.
     """
-    target = sig["target"]
-    stop   = sig["stop"]
+    product = sig.get("product")
+    t = _raw_num(sig["target"], product)
+    s = _raw_num(sig["stop"], product)
     return [
         [("✅ Entré", "entre"), ("🚫 Paso", "paso")],
         [("🔄 ¿Sigue válida?", "revisar")],
-        [(f"📋 Target {_raw_num(target)}", {"copy": _raw_num(target)}),
-         (f"📋 Stop {_raw_num(stop)}",   {"copy": _raw_num(stop)})],
+        [(f"📋 Target {t}", {"copy": t}),
+         (f"📋 Stop {s}",   {"copy": s})],
     ]
 
 
-def _raw_num(p: float) -> str:
-    """Numero crudo sin $ ni comas, listo para pegar en Coinbase."""
+def _raw_num(p: float, product: str | None = None) -> str:
+    """
+    Numero crudo sin $ ni comas, listo para pegar en Coinbase.
+    Si se conoce el par, usa exactamente los decimales que Coinbase acepta
+    (quote_increment) — ni uno mas.
+    """
+    if product:
+        try:
+            from growth.coinbase_data import increment_decimals
+            d = increment_decimals(product)
+            if d is not None:
+                return f"{p:.{d}f}"
+        except Exception:
+            pass
     if p >= 1000:
         return f"{p:.2f}"
     if p >= 1:

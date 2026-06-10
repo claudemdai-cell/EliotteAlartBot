@@ -13,7 +13,7 @@ El riesgo (stop y agresividad) se adapta al balance actual (tramos).
 """
 
 from dataclasses import dataclass, field
-from growth.coinbase_data import get_candles, get_price, G_1H, G_6H, G_1D
+from growth.coinbase_data import get_candles, get_price, snap_price, G_1H, G_6H, G_1D
 from growth.indicators import compute_rsi, compute_ema, pct_change
 
 
@@ -201,10 +201,10 @@ def evaluate(product: str, balance: float) -> Signal | None:
     if score < tier.min_score:
         return None
 
-    # ── Construir niveles ──
-    stop   = round(price * (1 - tier.stop_pct), 8)
+    # ── Construir niveles (redondeados a la precision que acepta Coinbase) ──
+    stop   = snap_price(price * (1 - tier.stop_pct), product)
     risk   = price - stop
-    target = round(price + risk * tier.target_rr, 8)
+    target = snap_price(price + risk * tier.target_rr, product)
     rr     = round((target - price) / risk, 1) if risk > 0 else 0
 
     return Signal(
@@ -284,15 +284,16 @@ def evaluate_reversion(product: str, balance: float) -> Signal | None:
         return None
 
     # Niveles: stop bajo el piso reciente, target hacia la EMA21 diaria
+    # (redondeados a la precision que acepta Coinbase)
     ema21_d = compute_ema(d_close, 21)
-    stop = round(min(low30, price * (1 - tier.stop_pct)) * 0.995, 8)
+    stop = snap_price(min(low30, price * (1 - tier.stop_pct)) * 0.995, product)
     risk = price - stop
     if risk <= 0:
         return None
     # target: el mayor entre RR del tramo y un acercamiento a la EMA21
     target_rr   = price + risk * tier.target_rr
     target_ema  = max(ema21_d, price * 1.06)
-    target = round(max(target_rr, min(target_ema, price * 1.5)), 8)
+    target = snap_price(max(target_rr, min(target_ema, price * 1.5)), product)
     rr = round((target - price) / risk, 1)
 
     if rr < 1.5:
@@ -359,9 +360,9 @@ def revalidate_signal(sig: dict, balance: float) -> dict:
     # Se movio a favor 1.5-4%: aun hay jugada pero con niveles recalculados
     if drift > 1.5:
         tier = risk_tier(balance)
-        new_stop = round(price_now * (1 - tier.stop_pct), 8)
+        new_stop = snap_price(price_now * (1 - tier.stop_pct), sig["product"])
         risk = price_now - new_stop
-        new_target = round(price_now + risk * tier.target_rr, 8)
+        new_target = snap_price(price_now + risk * tier.target_rr, sig["product"])
         new_sig = dict(sig)
         new_sig["price"]  = price_now
         new_sig["stop"]   = new_stop

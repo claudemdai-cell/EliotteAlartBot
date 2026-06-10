@@ -57,7 +57,7 @@ def handle_growth_command(text: str) -> str:
             now_txt = f" Ahora está en {messages.fmt_price(price_now)}." if price_now else ""
             return (
                 f"⏱️ Esa señal tiene {age:.0f} min.{now_txt}\n"
-                f"¿A qué precio entraste? Responde: *hecho {messages._raw_num(price_now or sig['price'])}*\n"
+                f"¿A qué precio entraste? Responde: *hecho {messages._raw_num(price_now or sig['price'], sig.get('product'))}*\n"
                 f"(o solo toca 🔄 ¿Sigue válida? para revisar antes)"
             )
 

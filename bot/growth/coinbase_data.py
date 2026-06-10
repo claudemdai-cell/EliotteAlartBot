@@ -129,3 +129,49 @@ _EXCLUDE_BASE = {
     "USDC", "USDT", "DAI", "USDP", "GUSD", "PYUSD", "PAX", "BUSD",
     "WBTC", "CBETH", "WETH",
 }
+
+
+# ─── PRECISION DE PRECIO POR PRODUCTO ─────────────────────────────────────────
+# Coinbase rechaza ordenes con mas decimales que el quote_increment del par
+# (ej: OP-USD acepta 0.001 -> max 3 decimales). Cacheamos el incremento.
+_quote_inc_cache: dict = {}
+
+
+def get_quote_increment(product_id: str) -> float | None:
+    """Incremento minimo de precio del par (ej: 0.001). None si falla."""
+    if product_id in _quote_inc_cache:
+        return _quote_inc_cache[product_id]
+    data = _get(f"/products/{product_id}")
+    if not data:
+        return None
+    try:
+        inc = float(data["quote_increment"])
+        _quote_inc_cache[product_id] = inc
+        return inc
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def snap_price(price: float, product_id: str) -> float:
+    """Redondea un precio al incremento valido del par para Coinbase."""
+    inc = get_quote_increment(product_id)
+    if not inc or inc <= 0:
+        return price
+    steps = round(price / inc)
+    decimals = max(0, -_exp10(inc))
+    return round(steps * inc, decimals)
+
+
+def increment_decimals(product_id: str) -> int | None:
+    """Cantidad de decimales que acepta el par (segun quote_increment)."""
+    inc = get_quote_increment(product_id)
+    if not inc or inc <= 0:
+        return None
+    return max(0, -_exp10(inc))
+
+
+def _exp10(x: float) -> int:
+    """Exponente decimal de un incremento tipo 0.001 -> -3, 1 -> 0."""
+    from decimal import Decimal
+    d = Decimal(str(x)).normalize()
+    return int(d.as_tuple().exponent)
