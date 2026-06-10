@@ -52,11 +52,16 @@ def start_growth_thread():
 
 
 def start_keepalive_thread():
+    """
+    Auto-ping cada 5 min para evitar que Render free se duerma (limite 15 min).
+    Cubre ambos bots (comparten /health). Como respaldo extra se recomienda
+    un monitor externo (UptimeRobot/cron-job.org) pegandole a /health.
+    """
     import time, requests as req
     def ping():
-        url = "https://eliottealartbot.onrender.com/health"
+        url = os.getenv("BOT_URL", "https://eliottealartbot.onrender.com").rstrip("/") + "/health"
         while True:
-            time.sleep(600)
+            time.sleep(300)  # 5 min, holgado bajo el limite de 15
             try:
                 req.get(url, timeout=10)
                 print("[KEEPALIVE] ok")
@@ -64,7 +69,7 @@ def start_keepalive_thread():
                 print(f"[KEEPALIVE] error: {e}")
     t = threading.Thread(target=ping, daemon=True)
     t.start()
-    print("[MAIN] Keep-alive iniciado.")
+    print("[MAIN] Keep-alive iniciado (cada 5 min).")
 
 
 # ─── COMANDOS TELEGRAM ────────────────────────────────────────────────────────
@@ -178,21 +183,35 @@ def telegram_webhook():
 
 @app.route("/growth-telegram", methods=["POST"])
 def growth_telegram_webhook():
-    """Recibe updates del bot de crecimiento y responde comandos."""
+    """Recibe updates del bot de crecimiento: comandos de texto y clics de botones."""
     data = request.get_json(force=True, silent=True)
     if not data:
         return jsonify({"ok": True})
-    msg = data.get("message") or data.get("edited_message")
-    if not msg:
-        return jsonify({"ok": True})
-    text = msg.get("text", "")
-    if not text:
-        return jsonify({"ok": True})
 
-    print(f"[GROWTH TG] Mensaje: {text}")
     try:
         from growth.commands import handle_growth_command
-        from growth.alerts import send_growth_telegram
+        from growth.alerts import send_growth_telegram, answer_callback
+
+        # Clic en un boton inline (Entré / Paso / Vendí)
+        cb = data.get("callback_query")
+        if cb:
+            cb_data = cb.get("data", "")
+            print(f"[GROWTH TG] Boton: {cb_data}")
+            answer_callback(cb.get("id", ""))
+            response = handle_growth_command(cb_data)
+            if response:
+                send_growth_telegram(response)
+            return jsonify({"ok": True})
+
+        # Mensaje de texto normal
+        msg = data.get("message") or data.get("edited_message")
+        if not msg:
+            return jsonify({"ok": True})
+        text = msg.get("text", "")
+        if not text:
+            return jsonify({"ok": True})
+
+        print(f"[GROWTH TG] Mensaje: {text}")
         response = handle_growth_command(text)
         if response:
             send_growth_telegram(response)

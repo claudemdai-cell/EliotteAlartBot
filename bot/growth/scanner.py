@@ -77,7 +77,8 @@ def look_for_setup(available: set[str]) -> None:
 
     state.set_pending(sig_dict)
     msg = messages.buy_signal(sig_dict, balance, size_usd)
-    send_growth_telegram(msg)
+    buttons = [[("✅ Entré", "entre"), ("🚫 Paso", "paso")]]
+    send_growth_telegram(msg, buttons=buttons)
     print(f"[GROWTH] Señal enviada: {best.name} score={best.score} rr={best.rr}")
 
 
@@ -94,11 +95,13 @@ def monitor_position() -> None:
 
     old_bal = s["balance"]
 
+    sell_btn = [[("💰 Vendí", "vendi")]]
+
     # Target alcanzado
     if price >= pos["target"]:
         res = state.close_position(price, "target")
         msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
-        send_growth_telegram(msg)
+        send_growth_telegram(msg, buttons=sell_btn)
         print(f"[GROWTH] TARGET {pos['name']} +{res['pnl_pct']}%")
         return
 
@@ -106,7 +109,7 @@ def monitor_position() -> None:
     if price <= pos["stop"]:
         res = state.close_position(price, "stop")
         msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
-        send_growth_telegram(msg)
+        send_growth_telegram(msg, buttons=sell_btn)
         print(f"[GROWTH] STOP {pos['name']} {res['pnl_pct']}%")
         return
 

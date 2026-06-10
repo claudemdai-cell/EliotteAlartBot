@@ -41,8 +41,17 @@ def handle_growth_command(text: str) -> str:
             f"Lo vigilo 24/7 y te aviso cuando salir. 🦅"
         )
 
+    # paso — descartar la señal pendiente (no entré)
+    if low in ("paso", "/paso", "no", "skip"):
+        s = state.load()
+        if not s.get("pending_signal"):
+            return "No hay señal pendiente. Todo en orden. 👍"
+        name = s["pending_signal"].get("name", "")
+        state.set_pending(None)
+        return f"Entendido, pasamos de {name}. Sigo buscando el próximo setup. 🦅"
+
     # vendido — confirmar cierre manual
-    if low in ("vendido", "/vendido", "cerre", "cerré", "sali", "salí"):
+    if low in ("vendido", "/vendido", "vendi", "vendí", "cerre", "cerré", "sali", "salí"):
         s = state.load()
         pos = s.get("open_position")
         if not pos:

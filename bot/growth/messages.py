@@ -156,6 +156,7 @@ def status(s: dict, current_price: float | None = None) -> str:
     growth = _pct(start, balance)
     lines = [
         f"🚀 *{SELLO} · Estado*\n",
+        f"{_alive_line(s)}",
         f"Balance: *{fmt_usd(balance)}* ({growth:+.0f}%)",
         f"Meta: $1,000",
     ]
@@ -185,16 +186,35 @@ def status(s: dict, current_price: float | None = None) -> str:
     return "\n".join(lines)
 
 
+def _alive_line(s: dict) -> str:
+    """Indicador de vida basado en last_scan_ts."""
+    import datetime
+    ts = s.get("last_scan_ts")
+    if not ts:
+        return "🟢 Activo, arrancando…"
+    try:
+        last = datetime.datetime.fromisoformat(ts)
+        mins = (datetime.datetime.utcnow() - last).total_seconds() / 60
+        if mins < 10:
+            return f"🟢 Activo · última revisión hace {int(mins)} min"
+        if mins < 60:
+            return f"🟡 Última revisión hace {int(mins)} min"
+        return f"🔴 Sin revisar hace {int(mins/60)}h — puede estar dormido"
+    except Exception:
+        return "🟢 Activo"
+
+
 def help_text() -> str:
     return (
         f"🚀 *{SELLO} — Comandos*\n\n"
-        "/estado — balance, posición y progreso\n"
+        "/estado — balance, posición y si estoy vivo\n"
         "/balance <monto> — fijar/ajustar tu capital\n"
-        "*hecho* — confirmar que compraste la señal\n"
-        "*vendido* — confirmar que cerraste\n"
         "/pausa — el bot deja de mandar señales\n"
         "/reanudar — reactivar señales\n"
         "/ayuda — ver este menú\n\n"
+        "Cuando llegue una señal, te saldrán botones:\n"
+        "✅ *Entré* · 🚫 *Paso* · 💰 *Vendí*\n"
+        "(o escríbelos a mano si prefieres)\n\n"
         "_Yo busco el setup y te explico el porqué.\n"
         "Tú pones la orden en Coinbase. Equipo._"
     )
