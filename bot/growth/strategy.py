@@ -333,6 +333,46 @@ def scan_universe(balance: float, available: set[str] | None = None) -> list[Sig
     return signals
 
 
+# ─── RE-VALIDACION DE SENAL (boton "Sigue valida?") ──────────────────────────
+def revalidate_signal(sig: dict, balance: float) -> dict:
+    """
+    Comprueba si una senal pendiente sigue siendo valida al precio actual.
+    Retorna:
+      { verdict: 'valida'|'ajustada'|'expirada'|'error',
+        price_now, drift_pct, sig (actualizada si verdict='ajustada') }
+    """
+    price_now = get_price(sig["product"])
+    if price_now is None:
+        return {"verdict": "error", "price_now": None, "drift_pct": 0, "sig": sig}
+
+    entry = sig["price"]
+    drift = (price_now - entry) / entry * 100 if entry else 0
+
+    # Toco el stop -> el setup se invalido
+    if price_now <= sig["stop"]:
+        return {"verdict": "expirada", "price_now": price_now, "drift_pct": drift, "sig": sig}
+
+    # Corrio demasiado (en cualquier direccion) -> ya no es la misma jugada
+    if drift > 4 or drift < -4:
+        return {"verdict": "expirada", "price_now": price_now, "drift_pct": drift, "sig": sig}
+
+    # Se movio a favor 1.5-4%: aun hay jugada pero con niveles recalculados
+    if drift > 1.5:
+        tier = risk_tier(balance)
+        new_stop = round(price_now * (1 - tier.stop_pct), 8)
+        risk = price_now - new_stop
+        new_target = round(price_now + risk * tier.target_rr, 8)
+        new_sig = dict(sig)
+        new_sig["price"]  = price_now
+        new_sig["stop"]   = new_stop
+        new_sig["target"] = new_target
+        new_sig["rr"]     = round((new_target - price_now) / risk, 1) if risk > 0 else 0
+        return {"verdict": "ajustada", "price_now": price_now, "drift_pct": drift, "sig": new_sig}
+
+    # Dentro de la zona (incluso un poco mas barato = mejor entrada)
+    return {"verdict": "valida", "price_now": price_now, "drift_pct": drift, "sig": sig}
+
+
 # ─── MARKET REGIME ────────────────────────────────────────────────────────────
 def market_too_weak() -> bool:
     """True si BTC cayo mas de 15% en la ultima semana (pausamos)."""

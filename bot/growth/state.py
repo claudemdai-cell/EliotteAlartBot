@@ -23,12 +23,22 @@ Estructura:
 
 import os
 import json
+import time
 import datetime
 import threading
+
+from growth import gh_store
 
 _DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
 _PATH = os.path.join(_DIR, "growth_state.json")
 _LOCK = threading.Lock()
+
+# Rate limit del backup a GitHub: max 1 push cada 30s (salvo eventos importantes)
+_BACKUP_MIN_INTERVAL = 30
+_last_backup = {"ts": 0.0}
+
+# Flag: el estado se recupero de GitHub tras un reinicio (para avisar por Telegram)
+RECOVERY = {"recovered": False, "failed": False, "checked": False}
 
 _DEFAULT = {
     "balance": 100.0,
@@ -53,9 +63,26 @@ def _now_iso() -> str:
 
 
 def load() -> dict:
-    """Carga el estado desde disco (o defaults)."""
+    """
+    Carga el estado desde disco. Si no existe (reinicio de Render con disco
+    efimero), intenta recuperarlo del backup en GitHub.
+    """
     with _LOCK:
         if not os.path.exists(_PATH):
+            # Posible reinicio: intentar recuperar de GitHub (solo la primera vez)
+            if not RECOVERY["checked"]:
+                RECOVERY["checked"] = True
+                if gh_store.enabled():
+                    remote = gh_store.download()
+                    if remote:
+                        merged = dict(_DEFAULT)
+                        merged.update(remote)
+                        _write_local(merged)
+                        RECOVERY["recovered"] = True
+                        print("[STATE] Estado recuperado desde GitHub.")
+                        return merged
+                    RECOVERY["failed"] = True
+                    print("[STATE] Sin backup en GitHub; arrancando con defaults.")
             return dict(_DEFAULT)
         try:
             with open(_PATH, "r", encoding="utf-8") as f:
@@ -68,26 +95,42 @@ def load() -> dict:
             return dict(_DEFAULT)
 
 
-def save(state: dict) -> None:
-    """Guarda el estado a disco de forma atomica."""
+def _write_local(state: dict) -> None:
+    """Escribe el estado a disco local (sin lock; el caller debe tenerlo)."""
+    os.makedirs(_DIR, exist_ok=True)
+    tmp = _PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    try:
+        os.replace(tmp, _PATH)
+    except OSError:
+        # OneDrive/Windows puede bloquear el rename: escribir directo
+        with open(_PATH, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def save(state: dict, important: bool = False) -> None:
+    """
+    Guarda el estado a disco y lo respalda en GitHub.
+    important=True fuerza el backup inmediato (abrir/cerrar posicion, balance);
+    si no, respeta el rate limit de 30s para no saturar la API.
+    """
     with _LOCK:
         try:
-            os.makedirs(_DIR, exist_ok=True)
-            tmp = _PATH + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
-            try:
-                os.replace(tmp, _PATH)
-            except OSError:
-                # OneDrive/Windows puede bloquear el rename: escribir directo
-                with open(_PATH, "w", encoding="utf-8") as f:
-                    json.dump(state, f, indent=2, ensure_ascii=False)
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+            _write_local(state)
         except Exception as e:
             print(f"[STATE] Error guardando estado: {e}")
+
+    if not gh_store.enabled():
+        return
+    now = time.time()
+    if important or (now - _last_backup["ts"]) >= _BACKUP_MIN_INTERVAL:
+        if gh_store.upload(state):
+            _last_backup["ts"] = now
 
 
 # ─── OPERACIONES DE ALTO NIVEL ────────────────────────────────────────────────
@@ -98,7 +141,7 @@ def set_balance(amount: float) -> dict:
     if not s["started_at"]:
         s["started_at"] = _now_iso()
         s["start_balance"] = round(float(amount), 2)
-    save(s)
+    save(s, important=True)
     return s
 
 
@@ -106,27 +149,50 @@ def set_pending(signal_dict: dict | None) -> dict:
     s = load()
     if signal_dict is not None:
         signal_dict = dict(signal_dict)
-        signal_dict["created_at"] = _now_iso()
+        signal_dict.setdefault("created_at", _now_iso())
     s["pending_signal"] = signal_dict
-    save(s)
+    save(s, important=True)
     return s
 
 
-def open_position_from_pending() -> dict | None:
-    """Convierte la senal pendiente en posicion abierta (cuando el user dice 'hecho')."""
+def pending_age_minutes() -> float | None:
+    """Minutos desde que se creo la senal pendiente. None si no hay senal."""
+    s = load()
+    sig = s.get("pending_signal")
+    if not sig or not sig.get("created_at"):
+        return None
+    try:
+        created = datetime.datetime.fromisoformat(sig["created_at"])
+        return (datetime.datetime.utcnow() - created).total_seconds() / 60
+    except Exception:
+        return None
+
+
+def open_position_from_pending(entry_override: float | None = None) -> dict | None:
+    """
+    Convierte la senal pendiente en posicion abierta (cuando el user dice 'hecho').
+    entry_override: precio real al que entro el usuario (si lo da); el stop/target
+    se mantienen porque son niveles de estructura del mercado.
+    """
     s = load()
     sig = s.get("pending_signal")
     if not sig:
         return None
     size_usd = round(s["balance"] * sig.get("size_pct", 1.0), 2)
+    entry = float(entry_override) if entry_override else sig["price"]
     s["open_position"] = {
         "product":  sig["product"],
         "name":     sig["name"],
-        "entry":    sig["price"],
+        "entry":    entry,
         "stop":     sig["stop"],
         "target":   sig["target"],
         "size_usd": size_usd,
         "opened_at": _now_iso(),
+        "kind":     sig.get("kind", "breakout"),
+        "score":    sig.get("score", 0),
+        "trail_level": 0,         # 0=stop original, 1=breakeven, 2=asegurando ganancia
+        "last_progress_pnl": 0.0, # ultimo % notificado en avisos de progreso
+        "last_progress_ts": None,
     }
     s["pending_signal"] = None
     # registrar conteo de senales del dia
@@ -135,7 +201,7 @@ def open_position_from_pending() -> dict | None:
         s["last_signal_day"] = today
         s["signals_today"] = 0
     s["signals_today"] = s.get("signals_today", 0) + 1
-    save(s)
+    save(s, important=True)
     return s["open_position"]
 
 
@@ -163,6 +229,8 @@ def close_position(exit_price: float, result: str) -> dict:
         "pnl_pct":   round(pnl_pct, 2),
         "pnl_usd":   round(pnl_usd, 2),
         "result":    result,
+        "kind":      pos.get("kind", "?"),
+        "score":     pos.get("score", 0),
         "closed_at": _now_iso(),
     })
     s["balance"] = new_balance
@@ -177,7 +245,7 @@ def close_position(exit_price: float, result: str) -> dict:
     else:
         s["loss_streak"] = 0
 
-    save(s)
+    save(s, important=True)
     return {
         "pnl_pct": round(pnl_pct, 2),
         "pnl_usd": round(pnl_usd, 2),

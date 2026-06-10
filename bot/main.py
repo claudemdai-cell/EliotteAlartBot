@@ -61,12 +61,12 @@ def start_keepalive_thread():
     def ping():
         url = os.getenv("BOT_URL", "https://eliottealartbot.onrender.com").rstrip("/") + "/health"
         while True:
-            time.sleep(300)  # 5 min, holgado bajo el limite de 15
             try:
                 req.get(url, timeout=10)
                 print("[KEEPALIVE] ok")
             except Exception as e:
                 print(f"[KEEPALIVE] error: {e}")
+            time.sleep(300)  # 5 min, holgado bajo el limite de 15
     t = threading.Thread(target=ping, daemon=True)
     t.start()
     print("[MAIN] Keep-alive iniciado (cada 5 min).")
@@ -166,6 +166,12 @@ def telegram_webhook():
     if not msg:
         return jsonify({"ok": True})
 
+    # Solo aceptar mensajes del chat configurado
+    expected = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not expected or str(msg.get("chat", {}).get("id")) != str(expected):
+        print("[TELEGRAM] Mensaje de chat desconocido, ignorado")
+        return jsonify({"ok": True})
+
     text = msg.get("text", "")
     if not text:
         return jsonify({"ok": True})
@@ -181,6 +187,26 @@ def telegram_webhook():
 
 # ─── ENDPOINTS GROWTH (Reto 100->1000) ───────────────────────────────────────
 
+# Botones validos del bot growth (whitelist de callback_data)
+_GROWTH_CALLBACKS = {"entre", "paso", "vendi", "revisar"}
+
+
+def _growth_chat_ok(chat_id) -> bool:
+    """Solo procesar mensajes/clics que vengan del chat configurado."""
+    expected = os.getenv("GROWTH_TELEGRAM_CHAT_ID", "")
+    return bool(expected) and str(chat_id) == str(expected)
+
+
+def _send_growth_response(response) -> None:
+    """handle_growth_command puede retornar str o (str, buttons)."""
+    from growth.alerts import send_growth_telegram
+    if isinstance(response, tuple):
+        text, buttons = response
+        send_growth_telegram(text, buttons=buttons)
+    elif response:
+        send_growth_telegram(response)
+
+
 @app.route("/growth-telegram", methods=["POST"])
 def growth_telegram_webhook():
     """Recibe updates del bot de crecimiento: comandos de texto y clics de botones."""
@@ -190,31 +216,34 @@ def growth_telegram_webhook():
 
     try:
         from growth.commands import handle_growth_command
-        from growth.alerts import send_growth_telegram, answer_callback
+        from growth.alerts import answer_callback
 
-        # Clic en un boton inline (Entré / Paso / Vendí)
+        # Clic en un boton inline (Entré / Paso / Vendí / Revisar)
         cb = data.get("callback_query")
         if cb:
+            chat_id = (cb.get("message") or {}).get("chat", {}).get("id")
             cb_data = cb.get("data", "")
-            print(f"[GROWTH TG] Boton: {cb_data}")
             answer_callback(cb.get("id", ""))
-            response = handle_growth_command(cb_data)
-            if response:
-                send_growth_telegram(response)
+            if not _growth_chat_ok(chat_id) or cb_data not in _GROWTH_CALLBACKS:
+                print(f"[GROWTH TG] Callback rechazado (chat {chat_id}, data {cb_data!r})")
+                return jsonify({"ok": True})
+            print(f"[GROWTH TG] Boton: {cb_data}")
+            _send_growth_response(handle_growth_command(cb_data))
             return jsonify({"ok": True})
 
         # Mensaje de texto normal
         msg = data.get("message") or data.get("edited_message")
         if not msg:
             return jsonify({"ok": True})
+        if not _growth_chat_ok(msg.get("chat", {}).get("id")):
+            print("[GROWTH TG] Mensaje de chat desconocido, ignorado")
+            return jsonify({"ok": True})
         text = msg.get("text", "")
         if not text:
             return jsonify({"ok": True})
 
         print(f"[GROWTH TG] Mensaje: {text}")
-        response = handle_growth_command(text)
-        if response:
-            send_growth_telegram(response)
+        _send_growth_response(handle_growth_command(text))
     except Exception as e:
         print(f"[GROWTH TG] Error: {e}")
     return jsonify({"ok": True})

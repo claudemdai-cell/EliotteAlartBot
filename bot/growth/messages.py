@@ -96,6 +96,16 @@ def sell_target(name: str, exit_price: float, pnl_pct: float, old_bal: float, ne
 
 
 def sell_stop(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float) -> str:
+    # Stop trailing con ganancia: no es una perdida, es una salida protegida
+    if pnl_pct >= 0:
+        return (
+            f"🔒 *VENDE {name} — ganancia protegida* · {SELLO}\n\n"
+            f"Tocó el stop que subimos: {fmt_price(exit_price)}\n"
+            f"Resultado: *{pnl_pct:+.1f}%* — el trailing funcionó. 😎\n\n"
+            f"Balance: {fmt_usd(old_bal)} → *{fmt_usd(new_bal)}*\n"
+            f"Vende todo y vamos por la próxima.\n\n"
+            f'Responde *"vendido"* para registrarlo.'
+        )
     return (
         f"⚠️ *SAL DE {name}* · {SELLO}\n\n"
         f"Tocó el stop: {fmt_price(exit_price)}\n"
@@ -229,6 +239,138 @@ def help_text() -> str:
         "(o escríbelos a mano si prefieres)\n\n"
         "_Yo busco el setup y te explico el porqué.\n"
         "Tú pones la orden en Coinbase. Equipo._"
+    )
+
+
+def signal_buttons(sig: dict) -> list:
+    """
+    Botonera estandar de una senal de compra:
+      [✅ Entré] [🚫 Paso]
+      [🔄 ¿Sigue válida?]
+      [📋 Target ...] [📋 Stop ...]
+    Los botones 📋 copian el numero crudo al portapapeles (para pegar en Coinbase).
+    """
+    target = sig["target"]
+    stop   = sig["stop"]
+    return [
+        [("✅ Entré", "entre"), ("🚫 Paso", "paso")],
+        [("🔄 ¿Sigue válida?", "revisar")],
+        [(f"📋 Target {_raw_num(target)}", {"copy": _raw_num(target)}),
+         (f"📋 Stop {_raw_num(stop)}",   {"copy": _raw_num(stop)})],
+    ]
+
+
+def _raw_num(p: float) -> str:
+    """Numero crudo sin $ ni comas, listo para pegar en Coinbase."""
+    if p >= 1000:
+        return f"{p:.2f}"
+    if p >= 1:
+        return f"{p:.3f}"
+    if p >= 0.01:
+        return f"{p:.5f}"
+    return f"{p:.8f}"
+
+
+def revalidation(verdict: str, sig: dict, price_now: float | None, drift_pct: float, age_min: float | None) -> str:
+    """Respuesta del boton '¿Sigue válida?'."""
+    name = sig.get("name", "?")
+    age_txt = ""
+    if age_min is not None:
+        if age_min >= 60:
+            age_txt = f" (señal de hace {age_min/60:.1f}h)"
+        else:
+            age_txt = f" (señal de hace {age_min:.0f} min)"
+
+    if verdict == "error":
+        return f"⚠️ No pude leer el precio de {name} ahora mismo. Intenta de nuevo en un momento."
+
+    header = f"🔄 *Revisión de {name}*{age_txt}\n\n"
+    drift_txt = f"{drift_pct:+.1f}%"
+
+    if verdict == "valida":
+        extra = "Incluso un poco más barato que la señal. 😎" if drift_pct < -0.3 else ""
+        return (
+            header +
+            f"Precio ahora: {fmt_price(price_now)} ({drift_txt} vs la señal)\n\n"
+            f"✅ *AÚN ESTÁS A TIEMPO.* La jugada sigue en pie\n"
+            f"con los mismos niveles. {extra}\n\n"
+            f"🎯 Target: {fmt_price(sig['target'])}\n"
+            f"🛑 Stop: {fmt_price(sig['stop'])}"
+        )
+    if verdict == "ajustada":
+        return (
+            header +
+            f"Precio ahora: {fmt_price(price_now)} ({drift_txt} vs la señal)\n\n"
+            f"⚠️ *Se movió a favor, pero aún hay jugada.*\n"
+            f"Ajusté los niveles al precio actual:\n\n"
+            f"💵 Entrada: {fmt_price(sig['price'])}\n"
+            f"🎯 Target nuevo: {fmt_price(sig['target'])}\n"
+            f"🛑 Stop nuevo: {fmt_price(sig['stop'])}\n"
+            f"⚖️ R/R 1:{sig.get('rr', '?')}\n\n"
+            f"Si entras, usa ESTOS niveles."
+        )
+    # expirada
+    return (
+        header +
+        f"Precio ahora: {fmt_price(price_now)} ({drift_txt} vs la señal)\n\n"
+        f"❌ *YA PASÓ.* El tren se fue o el setup se rompió.\n"
+        f"No entres tarde — perseguir trades es la forma\n"
+        f"más rápida de regalar dinero. La próxima llega. 🧘"
+    )
+
+
+def signal_expired(name: str, age_hours: float) -> str:
+    return (
+        f"⏰ La señal de *{name}* expiró (tenía {age_hours:.1f}h).\n"
+        f"El mercado ya es otro. Sigo buscando la próxima. 🦅"
+    )
+
+
+def trailing_update(name: str, level: int, new_stop: float, pnl_pct: float) -> str:
+    if level == 1:
+        return (
+            f"🔒 *{name}: stop subido a breakeven* · {SELLO}\n\n"
+            f"Vas {pnl_pct:+.1f}%. Mueve tu stop a *{fmt_price(new_stop)}*\n"
+            f"(tu precio de entrada). A partir de aquí,\n"
+            f"*este trade ya no puede hacerte perder.* 😤\n\n"
+            f"📋 Stop nuevo abajo para copiar."
+        )
+    return (
+        f"🔒 *{name}: asegurando ganancia* · {SELLO}\n\n"
+        f"Vas {pnl_pct:+.1f}%. Sube tu stop a *{fmt_price(new_stop)}*.\n"
+        f"Pase lo que pase, ya ganas en este trade. 💰\n\n"
+        f"📋 Stop nuevo abajo para copiar."
+    )
+
+
+def position_progress(name: str, pnl_pct: float, price: float, target: float) -> str:
+    if pnl_pct >= 0:
+        dist = (target - price) / price * 100 if price else 0
+        return (
+            f"📈 *{name}* va {pnl_pct:+.1f}% · {SELLO}\n"
+            f"Precio: {fmt_price(price)} | Falta {dist:.1f}% para el target.\n"
+            f"Aguanta, lo estamos logrando. 🚀"
+        )
+    return (
+        f"📉 *{name}* va {pnl_pct:+.1f}% · {SELLO}\n"
+        f"Precio: {fmt_price(price)}. Respira — el stop está puesto\n"
+        f"por algo. O rebota, o salimos con pérdida controlada."
+    )
+
+
+def state_recovered(balance: float, trades: int) -> str:
+    return (
+        f"♻️ *Me reinicié y recuperé todo* · {SELLO}\n\n"
+        f"Balance: *{fmt_usd(balance)}* | Trades registrados: {trades}\n"
+        f"Backup de GitHub funcionando. Seguimos. 💪"
+    )
+
+
+def state_lost() -> str:
+    return (
+        f"⚠️ *Me reinicié y no pude recuperar el estado* · {SELLO}\n\n"
+        f"Confirma tu balance actual con */balance <monto>*\n"
+        f"y si tienes una posición abierta, avísame."
     )
 
 

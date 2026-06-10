@@ -50,8 +50,19 @@ def look_for_setup(available: set[str]) -> None:
 
     if s.get("paused"):
         return
-    if s.get("open_position") or s.get("pending_signal"):
+    if s.get("open_position"):
         return  # ya hay algo en juego
+
+    # Senal pendiente: si tiene >4h, expirarla y avisar; si no, esperar
+    if s.get("pending_signal"):
+        age = state.pending_age_minutes()
+        if age is not None and age > 240:
+            name = s["pending_signal"].get("name", "?")
+            state.set_pending(None)
+            send_growth_telegram(messages.signal_expired(name, age / 60))
+        else:
+            return
+
     if state.in_cooldown():
         return
 
@@ -77,7 +88,7 @@ def look_for_setup(available: set[str]) -> None:
 
     state.set_pending(sig_dict)
     msg = messages.buy_signal(sig_dict, balance, size_usd)
-    buttons = [[("✅ Entré", "entre"), ("🚫 Paso", "paso")]]
+    buttons = messages.signal_buttons(sig_dict)
     logo = messages.logo_url(best.product)
     send_growth_photo(logo, msg, buttons=buttons)
     print(f"[GROWTH] Señal enviada: {best.name} score={best.score} rr={best.rr}")
@@ -96,7 +107,10 @@ def monitor_position() -> None:
 
     old_bal = s["balance"]
 
-    sell_btn = [[("💰 Vendí", "vendi")]]
+    sell_btn = [
+        [("💰 Vendí", "vendi")],
+        [(f"📋 Precio {messages._raw_num(price)}", {"copy": messages._raw_num(price)})],
+    ]
     logo = messages.logo_url(pos["product"])
 
     # Target alcanzado
@@ -114,6 +128,48 @@ def monitor_position() -> None:
         send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] STOP {pos['name']} {res['pnl_pct']}%")
         return
+
+    # ── Trailing stop: proteger ganancias sin cortar el recorrido ──
+    entry = pos["entry"]
+    pnl = (price - entry) / entry * 100 if entry else 0
+    target_pct = (pos["target"] - entry) / entry * 100 if entry else 0
+    level = pos.get("trail_level", 0)
+
+    new_stop = None
+    new_level = level
+    if level == 0 and pnl >= 10:
+        new_stop, new_level = entry, 1                  # breakeven
+    elif level == 1 and target_pct > 0 and pnl >= target_pct * 0.6:
+        new_stop, new_level = round(entry * 1.05, 8), 2  # asegurar +5%
+
+    if new_stop is not None and new_stop > pos["stop"]:
+        pos["stop"] = new_stop
+        pos["trail_level"] = new_level
+        s["open_position"] = pos
+        state.save(s, important=True)
+        msg = messages.trailing_update(pos["name"], new_level, new_stop, pnl)
+        copy_btn = [[(f"📋 Stop {messages._raw_num(new_stop)}", {"copy": messages._raw_num(new_stop)})]]
+        send_growth_telegram(msg, buttons=copy_btn)
+        print(f"[GROWTH] TRAILING {pos['name']} nivel {new_level} stop {new_stop}")
+        return
+
+    # ── Aviso de progreso (max 1 cada 2h, al cruzar +5% o -3% desde el ultimo) ──
+    last_pnl = pos.get("last_progress_pnl", 0.0)
+    last_ts  = pos.get("last_progress_ts")
+    delta = pnl - last_pnl
+    cooldown_ok = True
+    if last_ts:
+        try:
+            elapsed = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_ts)).total_seconds()
+            cooldown_ok = elapsed >= 7200
+        except Exception:
+            pass
+    if cooldown_ok and (delta >= 5 or delta <= -3):
+        pos["last_progress_pnl"] = pnl
+        pos["last_progress_ts"] = datetime.datetime.utcnow().isoformat()
+        s["open_position"] = pos
+        state.save(s)
+        send_growth_telegram(messages.position_progress(pos["name"], pnl, price, pos["target"]))
 
 
 # ─── RESUMENES ────────────────────────────────────────────────────────────────
@@ -145,7 +201,15 @@ def maybe_send_summaries() -> None:
 # ─── LOOP PRINCIPAL ───────────────────────────────────────────────────────────
 def run_growth_scanner() -> None:
     print("[GROWTH] Scanner del Reto 100->1000 iniciado.")
-    send_growth_telegram(messages.welcome())
+
+    # Cargar estado (dispara la recuperacion desde GitHub si hubo reinicio)
+    s = state.load()
+    if state.RECOVERY["recovered"]:
+        send_growth_telegram(messages.state_recovered(s["balance"], len(s.get("trade_log", []))))
+    elif state.RECOVERY["failed"]:
+        send_growth_telegram(messages.state_lost())
+    else:
+        send_growth_telegram(messages.welcome())
 
     # productos disponibles en Coinbase (cache, refrescado cada hora)
     available = set(list_usd_products()) or set(CURATED)

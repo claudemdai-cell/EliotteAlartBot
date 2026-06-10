@@ -19,3 +19,5 @@ services:
         sync: false
       - key: UTC_OFFSET_HOURS
         sync: false
+      - key: GITHUB_STATE_TOKEN
+        sync: false

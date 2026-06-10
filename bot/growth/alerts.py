@@ -13,6 +13,25 @@ TOKEN   = os.getenv("GROWTH_TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("GROWTH_TELEGRAM_CHAT_ID")
 
 
+def _build_keyboard(buttons: list) -> dict:
+    """
+    Convierte filas de (texto, data) en inline_keyboard de Telegram.
+    data puede ser:
+      - str            -> callback_data (boton normal)
+      - {"copy": "x"}  -> copy_text (copia 'x' al portapapeles con un toque)
+    """
+    rows = []
+    for row in buttons:
+        btn_row = []
+        for (t, d) in row:
+            if isinstance(d, dict) and "copy" in d:
+                btn_row.append({"text": t, "copy_text": {"text": str(d["copy"])}})
+            else:
+                btn_row.append({"text": t, "callback_data": d})
+        rows.append(btn_row)
+    return {"inline_keyboard": rows}
+
+
 def send_growth_telegram(text: str, buttons: list | None = None) -> bool:
     """
     Envia mensaje Markdown al chat del Reto. True si exitoso.
@@ -30,12 +49,7 @@ def send_growth_telegram(text: str, buttons: list | None = None) -> bool:
         "disable_web_page_preview": True,
     }
     if buttons:
-        payload["reply_markup"] = {
-            "inline_keyboard": [
-                [{"text": t, "callback_data": d} for (t, d) in row]
-                for row in buttons
-            ]
-        }
+        payload["reply_markup"] = _build_keyboard(buttons)
     for attempt in range(3):
         try:
             r = requests.post(url, json=payload, timeout=10)
@@ -51,11 +65,14 @@ def send_growth_telegram(text: str, buttons: list | None = None) -> bool:
 def send_growth_photo(photo_url: str, caption: str, buttons: list | None = None) -> bool:
     """
     Envia una foto (logo de la crypto) con caption y botones.
-    Si falla (logo no existe, etc.), cae de vuelta a un mensaje de texto.
+    Si falla (logo no existe, caption muy largo, etc.), cae a mensaje de texto.
     """
     if not TOKEN or not CHAT_ID:
         print("[GROWTH] Falta token/chat para enviar foto")
         return False
+    # sendPhoto limita el caption a 1024 chars (sendMessage llega a 4096)
+    if len(caption) > 1000:
+        return send_growth_telegram(caption, buttons=buttons)
     url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
     payload = {
         "chat_id": CHAT_ID,
@@ -64,12 +81,7 @@ def send_growth_photo(photo_url: str, caption: str, buttons: list | None = None)
         "parse_mode": "Markdown",
     }
     if buttons:
-        payload["reply_markup"] = {
-            "inline_keyboard": [
-                [{"text": t, "callback_data": d} for (t, d) in row]
-                for row in buttons
-            ]
-        }
+        payload["reply_markup"] = _build_keyboard(buttons)
     try:
         r = requests.post(url, json=payload, timeout=12)
         if r.status_code == 200:
