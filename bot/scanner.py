@@ -5,14 +5,16 @@ Scanner autónomo — corre cada 4 horas sin TradingView.
 - Resumen diario a las 6AM
 """
 
-import time
+import os
 import datetime
+import time
 import requests
 from layers import WebhookPayload, evaluate_layers, format_alert_text
 from fibonacci import in_golden_zone
 from alerts import send_telegram
 from log import log_alert
 from gem_hunter import run_gem_scan, send_gem_report
+from messages import daily_summary, analysis_update, gem_report
 
 # Timezone offset — cambia segun tu pais
 # -5 = Colombia, Peru, Ecuador | -3 = Argentina | -6 = Mexico CST
@@ -196,38 +198,74 @@ def detect_panorama_change(asset: str, old: dict, new: dict) -> list:
 
 
 def send_analysis_update(asset: str, levels: dict, changes: list) -> None:
-    """Envia alerta de cambio de panorama al Telegram."""
-    trend_emoji = {"alcista": "Alcista", "bajista": "Bajista", "lateral": "Lateral"}.get(levels["trend"], "?")
-    gz_dist = ((levels["last_price"] - levels["gz_low"]) / levels["gz_low"]) * 100
+    """Envia alerta de cambio de panorama al Telegram usando messages.py."""
+    msg = analysis_update(asset, levels, changes)
+    send_telegram(msg)
 
-    if gz_dist < 0:
-        zona_txt = f"Falta {abs(gz_dist):.1f}% para entrar"
-    elif in_golden_zone(levels["last_price"], levels["wave_start"], levels["wave_end"]):
-        zona_txt = "EN ZONA AHORA"
-    else:
-        zona_txt = f"Sobre zona +{gz_dist:.1f}%"
 
-    lines = [
-        f"*Actualizacion de Analisis: {asset}*",
-        "",
-    ]
+# ─── ESTADO DE UN ACTIVO ─────────────────────────────────────────────────────
 
-    if changes:
-        lines.append("*Cambios detectados:*")
-        for c in changes:
-            lines.append(f"  - {c}")
-        lines.append("")
+def get_asset_status(cfg: dict) -> dict | None:
+    """
+    Retorna diccionario con estado actual del activo, listo para messages.py.
+    Usado por send_daily_summary() y por los comandos de Telegram.
+    """
+    asset  = cfg["asset"]
+    symbol = cfg["symbol"]
+    state  = DYNAMIC_STATE.get(asset, {})
 
-    lines += [
-        f"*Panorama actual:* {trend_emoji}",
-        f"Precio: `{levels['last_price']}` | RSI: `{levels['rsi']:.0f}`",
-        f"Rango 90d: `{levels['min_90d']}` - `{levels['max_90d']}`",
-        f"Golden Zone: `{levels['gz_low']:.4f}` - `{levels['gz_high']:.4f}`",
-        f"Estado: {zona_txt}",
-        f"Stop: `{levels['stop']}` | Target: `{levels['target']}`",
-    ]
+    candles = get_ohlcv(symbol, "4h", 25)
+    if len(candles) < 21:
+        return None
 
-    send_telegram("\n".join(lines))
+    closes  = [float(c['c']) for c in candles]
+    volumes = [float(c['v']) for c in candles]
+    highs   = [float(c['h']) for c in candles]
+    lows    = [float(c['l']) for c in candles]
+    opens   = [float(c['o']) for c in candles]
+
+    rsi       = compute_rsi(closes)
+    ema21     = compute_ema(closes, 21)
+    vol_avg5  = sum(volumes[-5:]) / 5
+    vol_avg20 = sum(volumes[-20:]) / 20
+
+    price      = closes[-1]
+    wave_start = state.get("wave_start", min(lows))
+    wave_end   = state.get("wave_end",   max(highs))
+    stop       = state.get("stop",       min(lows) * 0.98)
+    target     = state.get("target",     max(highs) * 1.5)
+
+    rng     = wave_end - wave_start
+    gz_low  = wave_end - rng * 0.618
+    gz_high = wave_end - rng * 0.500
+
+    in_zone  = in_golden_zone(price, wave_start, wave_end)
+    dist_pct = round(((price - gz_low) / gz_low) * 100, 1) if gz_low > 0 else 0
+
+    payload = WebhookPayload(
+        asset=asset, price=price,
+        open_4h=opens[-1], close_4h=price,
+        high_4h=highs[-1], low_4h=lows[-1],
+        rsi_4h=rsi, volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        ema21_4h=ema21, in_elliott_zone=True,
+        wave_start=wave_start, wave_end=wave_end,
+    )
+    result = evaluate_layers(payload)
+    score  = result["score"]
+
+    return {
+        "asset":    asset,
+        "price":    price,
+        "score":    score,
+        "rsi":      rsi,
+        "in_zone":  in_zone,
+        "dist_pct": dist_pct,
+        "gz_low":   gz_low,
+        "gz_high":  gz_high,
+        "stop":     stop,
+        "target":   target,
+        "trend":    state.get("trend", "?"),
+    }
 
 
 # ─── SCAN ─────────────────────────────────────────────────────────────────────
@@ -285,66 +323,22 @@ def scan_asset(cfg: dict) -> None:
 # ─── RESUMEN DIARIO ───────────────────────────────────────────────────────────
 
 def send_daily_summary() -> None:
-    """Envia resumen diario de todos los activos a las 6AM."""
-    date_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)).strftime("%Y-%m-%d")
-    lines = [f"*Resumen Diario Elliott Bot*", f"_{date_str} | 6:00 AM_", ""]
+    """Envia resumen diario usando el nuevo formato de messages.py"""
+    local = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
+    date_str = local.strftime("%d %b %Y")
 
+    assets_data = []
     for cfg in WATCHLIST:
-        asset  = cfg["asset"]
-        symbol = cfg["symbol"]
-        state  = DYNAMIC_STATE.get(asset, {})
+        s = get_asset_status(cfg)
+        if s:
+            state = DYNAMIC_STATE.get(cfg["asset"], {})
+            s["trend"]  = state.get("trend", "?")
+            s["target"] = state.get("target", s["target"])
+            s["stop"]   = state.get("stop",   s["stop"])
+            assets_data.append(s)
 
-        candles = get_ohlcv(symbol, "4h", 25)
-        if len(candles) < 21:
-            continue
-
-        closes  = [float(c['c']) for c in candles]
-        volumes = [float(c['v']) for c in candles]
-        rsi = compute_rsi(closes)
-        vol5 = sum(volumes[-5:]) / 5
-        vol20 = sum(volumes[-20:]) / 20
-
-        price      = closes[-1]
-        wave_start = state.get("wave_start", min([float(c['l']) for c in candles]))
-        wave_end   = state.get("wave_end",   max([float(c['h']) for c in candles]))
-        target     = state.get("target", wave_end * 1.5)
-        stop       = state.get("stop", wave_start * 0.98)
-        trend      = state.get("trend", "?")
-        gz_low     = wave_end - abs(wave_end - wave_start) * 0.618
-        gz_high    = wave_end - abs(wave_end - wave_start) * 0.500
-        dist_pct   = ((price - gz_low) / gz_low) * 100
-
-        # Score rapido
-        ema21 = compute_ema(closes, 21)
-        payload = WebhookPayload(
-            asset=asset, price=price,
-            open_4h=float(candles[-1]['o']), close_4h=price,
-            high_4h=float(candles[-1]['h']), low_4h=float(candles[-1]['l']),
-            rsi_4h=rsi, volume_avg5=vol5, volume_avg20=vol20,
-            ema21_4h=ema21, in_elliott_zone=True,
-            wave_start=wave_start, wave_end=wave_end,
-        )
-        score = evaluate_layers(payload)["score"]
-        bar   = chr(9608) * score + chr(9617) * (5 - score)
-
-        if in_golden_zone(price, wave_start, wave_end):
-            zona_txt = "EN ZONA"
-        elif dist_pct < 0:
-            zona_txt = f"Falta {abs(dist_pct):.1f}% para zona"
-        else:
-            zona_txt = f"Sobre zona +{dist_pct:.1f}%"
-
-        estado = "ALERTA" if score >= 4 else ("Calentando" if score == 3 else "Esperando")
-        trend_txt = f" | {trend}" if trend != "?" else ""
-
-        lines.append(
-            f"*{asset}* [{bar}] {score}/5 - {estado}{trend_txt}\n"
-            f"  Precio: `{price}` | RSI: `{rsi:.0f}`\n"
-            f"  Zona: `{gz_low:.4f}` - `{gz_high:.4f}` | {zona_txt}\n"
-            f"  Target: `{target}` | Stop: `{stop}`"
-        )
-
-    send_telegram("\n".join(lines))
+    msg = daily_summary(assets_data, date_str)
+    send_telegram(msg)
 
 
 # ─── ANALISIS SEMANAL ─────────────────────────────────────────────────────────

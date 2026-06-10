@@ -93,35 +93,61 @@ def evaluate_layers(p: WebhookPayload) -> dict:
 
 
 def format_alert_text(p: WebhookPayload, result: dict, stop: float, target: float) -> str:
-    """Genera el texto de la alerta para Telegram."""
-    score = result["score"]
+    """Genera alerta limpia y legible para Telegram."""
+    score  = result["score"]
     layers = result["layers"]
-    bonus = result["bonus"]
+    bonus  = result["bonus"]
 
     risk   = abs(p.price - stop)
     reward = abs(target - p.price)
-    rb     = round(reward / risk, 2) if risk > 0 else 0
+    rr     = round(reward / risk, 1) if risk > 0 else 0
+    risk_pct   = round(risk / p.price * 100, 1)
+    reward_pct = round(reward / p.price * 100, 1)
 
-    emojis = {True: "✅", False: "❌"}
+    # Nombre limpio del activo
+    name = p.asset.replace("USD", "").replace("USDT", "")
+
+    # Header segun score
+    if score == 5 and bonus.passed:
+        header = f"SETUP PERFECTO — {name}"
+        sub    = "5/5 capas + EMA confirmada. Esto es lo que esperabas."
+    elif score == 5:
+        header = f"SETUP MAXIMO — {name}"
+        sub    = "5/5 capas alineadas. Alta probabilidad."
+    else:
+        header = f"SETUP ACTIVO — {name}"
+        sub    = "4/5 capas alineadas. Revisar antes de entrar."
+
+    # Capas en lenguaje simple
+    layer_names = {
+        "C1_Elliott": "Zona Elliott correcta",
+        "C2_Fibonacci": "Fibonacci 50-61.8%",
+        "C3_Volumen":   "Volumen bajando (sano)",
+        "C4_RSI":       f"RSI oversold ({p.rsi_4h:.0f})",
+        "C5_Vela":      "Vela de reversal alcista",
+    }
+    capas = "\n".join(
+        f"{'✅' if v.passed else '❌'} {layer_names[k]}"
+        for k, v in layers.items()
+    )
+    bonus_line = f"{'✅' if bonus.passed else '⚪'} EMA21 a favor (bonus)"
+
     lines = [
-        f"🚨 *ALERT {p.asset}* — {score}/5 capas",
-        f"",
-        f"💰 Precio: `{p.price}`",
-        f"🛑 Stop: `{stop}` | 🎯 Target: `{target}` | R/B: `1:{rb}`",
-        f"",
-        f"{emojis[layers['C1_Elliott'].passed]} C1 Elliott: {layers['C1_Elliott'].detail}",
-        f"{emojis[layers['C2_Fibonacci'].passed]} C2 Fib: {layers['C2_Fibonacci'].detail}",
-        f"{emojis[layers['C3_Volumen'].passed]} C3 Vol: {layers['C3_Volumen'].detail}",
-        f"{emojis[layers['C4_RSI'].passed]} C4 RSI: {layers['C4_RSI'].detail}",
-        f"{emojis[layers['C5_Vela'].passed]} C5 Vela: {layers['C5_Vela'].detail}",
-        f"{'✅' if bonus.passed else '⚪'} BONUS EMA21: {bonus.detail}",
+        f"*{header}*",
+        f"_{sub}_",
+        "",
+        f"Precio:  `{p.price:,.4f}`",
+        f"Stop:    `{stop:,.4f}`  (-{risk_pct}%)",
+        f"Target:  `{target:,.4f}`  (+{reward_pct}%)",
+        f"R/R:     1:{rr}",
+        "",
+        capas,
+        bonus_line,
     ]
 
-    if score < 4:
-        lines.append(f"\n⚠️ Solo {score}/5 — NO entrar aún. Esperar confirmación.")
-    elif score == 5 and bonus.passed:
-        lines.append(f"\n🔥 5/5 + BONUS — Setup ideal. Revisar y decidir.")
+    if score == 5 and bonus.passed:
+        lines += ["", "La mejor combinacion posible. Gestiona bien el riesgo."]
     else:
-        lines.append(f"\n⚡ {score}/5 — Setup válido. Revisar antes de entrar.")
+        lines += ["", "Revisa el grafico antes de entrar. Tu decides."]
 
     return "\n".join(lines)

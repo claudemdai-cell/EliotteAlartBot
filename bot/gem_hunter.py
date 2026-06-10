@@ -251,54 +251,10 @@ def run_gem_scan(watchlist_assets: set = None) -> list[dict]:
 
 
 def send_gem_report(gems: list[dict], new_gems: list[dict] = None) -> None:
-    """Envia reporte de gems al Telegram."""
-    if not gems:
-        send_telegram("*Gem Hunter* — Sin oportunidades destacadas ahora. Mercado sin setups claros.")
-        return
-
-    # Agrupar por categoria
-    by_emoji = {}
-    for g in gems:
-        by_emoji.setdefault(g["emoji"], []).append(g)
-
-    lines = ["*GEM HUNTER — Reporte de Mercado*", ""]
-
-    # Nuevas gems (no estaban antes)
-    if new_gems:
-        lines.append(f"*NUEVAS OPORTUNIDADES DETECTADAS ({len(new_gems)}):*")
-        for g in new_gems[:5]:
-            lines.append(f"{g['emoji']} *{g['asset']}* — {g['label']}")
-        lines.append("")
-
-    # Reporte por categoria
-    order = ["💎", "🔥", "⭐", "👀"]
-    for emoji in order:
-        group = by_emoji.get(emoji, [])
-        if not group:
-            continue
-        label = group[0]["label"]
-        lines.append(f"*{emoji} {label} ({len(group)}):*")
-        for g in group[:6]:  # max 6 por categoria
-            wl = " [WL]" if g.get("in_watchlist") else ""
-            if g["in_zone"]:
-                zona = "EN ZONA"
-            elif g["dist_to_zone"] < 0:
-                zona = f"Falta {abs(g['dist_to_zone']):.0f}%"
-            else:
-                zona = f"+{g['dist_to_zone']:.0f}% sobre zona"
-            lines.append(
-                f"  *{g['asset']}*{wl} | `{g['price']}` | RSI `{g['rsi']:.0f}` | {g['score']}/5 | {zona}"
-            )
-        lines.append("")
-
-    lines.append(f"_Total: {len(gems)} activos con potencial | Actualizado automaticamente_")
-
-    # Telegram tiene limite de 4096 chars — dividir si es necesario
-    msg = "\n".join(lines)
-    if len(msg) > 4000:
-        # Enviar en dos partes
-        send_telegram("\n".join(lines[:len(lines)//2]))
-        time.sleep(1)
-        send_telegram("\n".join(lines[len(lines)//2:]))
-    else:
+    """Envia reporte de gems al Telegram usando messages.py."""
+    from messages import gem_report
+    msgs = gem_report(gems, new_gems=new_gems)
+    for msg in msgs:
         send_telegram(msg)
+        if len(msgs) > 1:
+            time.sleep(1)
