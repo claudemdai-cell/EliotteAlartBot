@@ -17,7 +17,7 @@ import datetime
 from dataclasses import asdict
 
 from growth import state, messages
-from growth.alerts import send_growth_telegram
+from growth.alerts import send_growth_telegram, send_growth_photo
 from growth.coinbase_data import get_price, list_usd_products
 from growth.strategy import scan_universe, market_too_weak, risk_tier, CURATED
 
@@ -78,7 +78,8 @@ def look_for_setup(available: set[str]) -> None:
     state.set_pending(sig_dict)
     msg = messages.buy_signal(sig_dict, balance, size_usd)
     buttons = [[("✅ Entré", "entre"), ("🚫 Paso", "paso")]]
-    send_growth_telegram(msg, buttons=buttons)
+    logo = messages.logo_url(best.product)
+    send_growth_photo(logo, msg, buttons=buttons)
     print(f"[GROWTH] Señal enviada: {best.name} score={best.score} rr={best.rr}")
 
 
@@ -96,12 +97,13 @@ def monitor_position() -> None:
     old_bal = s["balance"]
 
     sell_btn = [[("💰 Vendí", "vendi")]]
+    logo = messages.logo_url(pos["product"])
 
     # Target alcanzado
     if price >= pos["target"]:
         res = state.close_position(price, "target")
         msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
-        send_growth_telegram(msg, buttons=sell_btn)
+        send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] TARGET {pos['name']} +{res['pnl_pct']}%")
         return
 
@@ -109,7 +111,7 @@ def monitor_position() -> None:
     if price <= pos["stop"]:
         res = state.close_position(price, "stop")
         msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
-        send_growth_telegram(msg, buttons=sell_btn)
+        send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] STOP {pos['name']} {res['pnl_pct']}%")
         return
 

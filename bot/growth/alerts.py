@@ -48,6 +48,39 @@ def send_growth_telegram(text: str, buttons: list | None = None) -> bool:
     return False
 
 
+def send_growth_photo(photo_url: str, caption: str, buttons: list | None = None) -> bool:
+    """
+    Envia una foto (logo de la crypto) con caption y botones.
+    Si falla (logo no existe, etc.), cae de vuelta a un mensaje de texto.
+    """
+    if not TOKEN or not CHAT_ID:
+        print("[GROWTH] Falta token/chat para enviar foto")
+        return False
+    url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "Markdown",
+    }
+    if buttons:
+        payload["reply_markup"] = {
+            "inline_keyboard": [
+                [{"text": t, "callback_data": d} for (t, d) in row]
+                for row in buttons
+            ]
+        }
+    try:
+        r = requests.post(url, json=payload, timeout=12)
+        if r.status_code == 200:
+            return True
+        print(f"[GROWTH PHOTO] {r.status_code}: {r.text[:150]} — fallback a texto")
+    except requests.RequestException as e:
+        print(f"[GROWTH PHOTO] error: {e} — fallback a texto")
+    # Fallback: mensaje de texto normal
+    return send_growth_telegram(caption, buttons=buttons)
+
+
 def answer_callback(callback_id: str, text: str = "") -> None:
     """Responde el 'loading' de un boton inline para que no quede girando."""
     if not TOKEN:

@@ -1,0 +1,28 @@
+name: Keep Render Awake
+
+# Mantiene el servicio de Render despierto pegandole a /health cada 5 minutos.
+# Evita que el free tier se duerma tras 15 min de inactividad.
+# No necesita ninguna cuenta externa: corre en los runners gratis de GitHub.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # cada 5 minutos
+  workflow_dispatch:          # permite dispararlo manualmente
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          echo "Pinging Render health at $(date -u)"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 https://eliottealartbot.onrender.com/health)
+            echo "Intento $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "OK: servicio despierto"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Aviso: el servicio no respondio 200 (puede estar arrancando en frio)"

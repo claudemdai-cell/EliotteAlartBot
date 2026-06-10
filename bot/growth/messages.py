@@ -25,6 +25,15 @@ def fmt_usd(amount: float) -> str:
     return f"${amount:,.2f}"
 
 
+def logo_url(product: str) -> str:
+    """
+    URL del logo de la crypto (CoinCap). product = 'OP-USD' -> simbolo 'op'.
+    Si no existe, Telegram simplemente no adjunta la foto.
+    """
+    sym = product.replace("-USD", "").replace("-USDT", "").lower()
+    return f"https://assets.coincap.io/assets/icons/{sym}@2x.png"
+
+
 def _pct(a: float, b: float) -> float:
     """Cambio porcentual de a hacia b."""
     return (b - a) / a * 100 if a else 0
@@ -56,9 +65,12 @@ def buy_signal(sig: dict, balance: float, size_usd: float) -> str:
         titulo = "🚀 *¡SEÑAL CALIENTE!*"
         gancho = f"Esto es lo que esperábamos. {name} rompió."
 
+    product = sig.get("product", f"{name}-USD")
+
     return (
         f"{titulo} · {SELLO}\n\n"
         f"🎯 *{name}/USD* · {fmt_price(price)}\n"
+        f"🆔 Búscalo en Coinbase como: `{product}`\n"
         f"{gancho}\n\n"
         f"📈 *LA JUGADA*\n"
         f"💵 Entra con: *{fmt_usd(size_usd)}*\n"
