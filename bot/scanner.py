@@ -9,9 +9,9 @@ import os
 import datetime
 import time
 import requests
-from layers import WebhookPayload, evaluate_layers, format_alert_text
+from layers import WebhookPayload, evaluate_layers, format_alert_text, alert_buttons
 from fibonacci import in_golden_zone
-from alerts import send_telegram
+from alerts import send_telegram, send_telegram_photo, logo_url
 from log import log_alert
 from gem_hunter import run_gem_scan, send_gem_report
 from messages import daily_summary, analysis_update, gem_report
@@ -315,7 +315,7 @@ def scan_asset(cfg: dict) -> None:
     sent = False
     if score >= 4:
         text = format_alert_text(payload, result, stop, target)
-        sent = send_telegram(text)
+        sent = send_telegram_photo(logo_url(asset), text, buttons=alert_buttons(stop, target))
 
     log_alert(asset, score, closes[-1], stop, target, layers_passed, sent)
 

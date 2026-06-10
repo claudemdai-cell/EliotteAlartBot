@@ -92,8 +92,29 @@ def evaluate_layers(p: WebhookPayload) -> dict:
     }
 
 
+def _fmt_price(p: float) -> str:
+    if p >= 1000:
+        return f"${p:,.2f}"
+    if p >= 1:
+        return f"${p:.3f}"
+    if p >= 0.01:
+        return f"${p:.5f}"
+    return f"${p:.7f}"
+
+
+def _raw_num(v: float) -> str:
+    """Numero crudo sin $ ni comas, listo para pegar en el exchange."""
+    if v >= 1000:
+        return f"{v:.2f}"
+    if v >= 1:
+        return f"{v:.3f}"
+    if v >= 0.01:
+        return f"{v:.5f}"
+    return f"{v:.8f}"
+
+
 def format_alert_text(p: WebhookPayload, result: dict, stop: float, target: float) -> str:
-    """Genera alerta limpia y legible para Telegram."""
+    """Alerta con la misma estructura visual del bot Reto 100->1000."""
     score  = result["score"]
     layers = result["layers"]
     bonus  = result["bonus"]
@@ -104,19 +125,18 @@ def format_alert_text(p: WebhookPayload, result: dict, stop: float, target: floa
     risk_pct   = round(risk / p.price * 100, 1)
     reward_pct = round(reward / p.price * 100, 1)
 
-    # Nombre limpio del activo
-    name = p.asset.replace("USD", "").replace("USDT", "")
+    name = p.asset.replace("USDT", "").replace("USD", "")
 
     # Header segun score
     if score == 5 and bonus.passed:
-        header = f"SETUP PERFECTO — {name}"
-        sub    = "5/5 capas + EMA confirmada. Esto es lo que esperabas."
+        titulo = "💎 *¡SETUP PERFECTO!*"
+        gancho = f"5/5 capas + EMA confirmada. Esto es lo que esperabas: {name} está listo."
     elif score == 5:
-        header = f"SETUP MAXIMO — {name}"
-        sub    = "5/5 capas alineadas. Alta probabilidad."
+        titulo = "🔥 *¡SETUP MÁXIMO!*"
+        gancho = f"5/5 capas alineadas en {name}. Alta probabilidad."
     else:
-        header = f"SETUP ACTIVO — {name}"
-        sub    = "4/5 capas alineadas. Revisar antes de entrar."
+        titulo = "🚀 *¡SETUP ACTIVO!*"
+        gancho = f"4/5 capas alineadas en {name}. Revisa antes de entrar."
 
     # Capas en lenguaje simple
     layer_names = {
@@ -132,22 +152,24 @@ def format_alert_text(p: WebhookPayload, result: dict, stop: float, target: floa
     )
     bonus_line = f"{'✅' if bonus.passed else '⚪'} EMA21 a favor (bonus)"
 
-    lines = [
-        f"*{header}*",
-        f"_{sub}_",
-        "",
-        f"Precio:  `{p.price:,.4f}`",
-        f"Stop:    `{stop:,.4f}`  (-{risk_pct}%)",
-        f"Target:  `{target:,.4f}`  (+{reward_pct}%)",
-        f"R/R:     1:{rr}",
-        "",
-        capas,
-        bonus_line,
-    ]
+    cierre = ("La mejor combinación posible. Gestiona bien el riesgo. 😤"
+              if (score == 5 and bonus.passed)
+              else "Revisa el gráfico antes de entrar. Tú decides. 🧠")
 
-    if score == 5 and bonus.passed:
-        lines += ["", "La mejor combinacion posible. Gestiona bien el riesgo."]
-    else:
-        lines += ["", "Revisa el grafico antes de entrar. Tu decides."]
+    return (
+        f"{titulo} · Elliott Bot\n\n"
+        f"🎯 *{name}/USD* · {_fmt_price(p.price)}\n"
+        f"{gancho}\n\n"
+        f"📈 *LA JUGADA*\n"
+        f"🎯 Target: {_fmt_price(target)} (+{reward_pct}%)\n"
+        f"🛑 Stop: {_fmt_price(stop)} (-{risk_pct}%)\n"
+        f"⚖️ R/R 1:{rr} — ganas {rr}x lo que arriesgas\n\n"
+        f"🔍 *LAS 5 CAPAS*\n{capas}\n{bonus_line}\n\n"
+        f"{cierre}"
+    )
 
-    return "\n".join(lines)
+
+def alert_buttons(stop: float, target: float) -> list:
+    """Botones 📋 de copiar target/stop para la alerta Elliott."""
+    t, s = _raw_num(target), _raw_num(stop)
+    return [[(f"📋 Target {t}", {"copy": t}), (f"📋 Stop {s}", {"copy": s})]]

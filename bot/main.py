@@ -8,8 +8,8 @@ Elliott Alert Bot — Servidor Flask.
 import os
 import threading
 from flask import Flask, request, jsonify
-from layers import WebhookPayload, evaluate_layers, format_alert_text
-from alerts import send_telegram
+from layers import WebhookPayload, evaluate_layers, format_alert_text, alert_buttons
+from alerts import send_telegram, send_telegram_photo, logo_url
 from log import log_alert
 
 app = Flask(__name__)
@@ -329,7 +329,7 @@ def webhook():
     sent = False
     if score >= 4:
         text = format_alert_text(payload, result, stop, target)
-        sent = send_telegram(text)
+        sent = send_telegram_photo(logo_url(payload.asset), text, buttons=alert_buttons(stop, target))
 
     log_alert(payload.asset, score, payload.price, stop, target, layers_passed, sent)
 
