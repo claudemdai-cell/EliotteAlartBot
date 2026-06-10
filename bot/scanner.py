@@ -394,6 +394,14 @@ def run_scanner(interval_hours: int = 4) -> None:
     # Analisis inicial al arrancar
     run_weekly_analysis(force=True)
 
+    # Si ya paso las 6AM hoy, enviar resumen ahora (evita perderse el del dia)
+    utc_now   = datetime.datetime.utcnow()
+    local_now = utc_now + datetime.timedelta(hours=UTC_OFFSET_HOURS)
+    if local_now.hour >= DAILY_SUMMARY_HOUR:
+        print(f"[SCANNER] Arranque tardio — enviando resumen del dia ({local_now.strftime('%H:%M')} local)")
+        send_daily_summary()
+        last_summary_day = local_now.date()
+
     while True:
         utc_now   = datetime.datetime.utcnow()
         local_now = utc_now + datetime.timedelta(hours=UTC_OFFSET_HOURS)
