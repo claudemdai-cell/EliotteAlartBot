@@ -70,12 +70,49 @@ def handle_growth_command(text: str) -> str:
             f"Lo vigilo 24/7 y te aviso cuando salir. 🦅"
         )
 
-    # revisar — ¿la señal pendiente sigue siendo valida?
-    if low in ("revisar", "/revisar", "sigue valida", "sigue válida", "¿sigue válida?"):
+    # revisar [producto] — ¿la señal sigue siendo valida?
+    # El boton manda "revisar:OP-USD"; asi funciona aunque el bot se haya
+    # reiniciado o la senal haya expirado: re-analiza el par desde cero.
+    if first_word.split(":")[0] in ("revisar", "/revisar") or low in ("sigue valida", "sigue válida", "¿sigue válida?"):
+        product = None
+        if ":" in raw:
+            product = raw.split(":", 1)[1].strip().upper()
+        elif len(raw.split()) >= 2:
+            product = raw.split()[1].strip().upper()
+            if product and "-" not in product:
+                product = f"{product}-USD"
+
         s = state.load()
         sig = s.get("pending_signal")
-        if not sig:
-            return "No hay señal pendiente que revisar. Cuando dispare una, ahí estará el botón. 👍"
+
+        # Sin senal pendiente (o es de otra moneda): re-analizar el par desde cero
+        if not sig or (product and sig.get("product") != product):
+            if not product:
+                return "No hay señal pendiente que revisar. Cuando dispare una, ahí estará el botón. 👍"
+            from growth.strategy import evaluate, evaluate_reversion
+            fresh = None
+            try:
+                fresh = evaluate(product, s["balance"]) or evaluate_reversion(product, s["balance"])
+            except Exception as e:
+                print(f"[GROWTH] Error re-evaluando {product}: {e}")
+            name = product.replace("-USD", "")
+            if fresh:
+                from dataclasses import asdict
+                sig_dict = asdict(fresh)
+                state.set_pending(sig_dict)
+                size_usd = round(s["balance"] * fresh.size_pct, 2)
+                text = (
+                    f"🔄 Re-analicé *{name}* desde cero y...\n"
+                    f"¡el setup SIGUE VIVO! Jugada actualizada: 👇\n\n"
+                ) + messages.buy_signal(sig_dict, s["balance"], size_usd)
+                return (text, messages.signal_buttons(sig_dict))
+            return (
+                f"🔄 Re-analicé *{name}* con datos frescos.\n\n"
+                f"❌ Ya no hay setup válido ahí. El momento pasó\n"
+                f"o las condiciones cambiaron. No entres tarde —\n"
+                f"sigo escaneando y te aviso con la próxima. 🦅"
+            )
+
         from growth.strategy import revalidate_signal
         age = state.pending_age_minutes()
         res = revalidate_signal(sig, s["balance"])

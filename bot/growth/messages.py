@@ -253,9 +253,12 @@ def signal_buttons(sig: dict) -> list:
     product = sig.get("product")
     t = _raw_num(sig["target"], product)
     s = _raw_num(sig["stop"], product)
+    # El boton lleva la moneda dentro: aunque la senal haya expirado o el bot
+    # se haya reiniciado, siempre puede re-analizar ese par al instante.
+    revisar_data = f"revisar:{product}" if product else "revisar"
     return [
         [("✅ Entré", "entre"), ("🚫 Paso", "paso")],
-        [("🔄 ¿Sigue válida?", "revisar")],
+        [("🔄 ¿Sigue válida?", revisar_data)],
         [(f"📋 Target {t}", {"copy": t}),
          (f"📋 Stop {s}",   {"copy": s})],
     ]

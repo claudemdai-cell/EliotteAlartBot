@@ -191,6 +191,16 @@ def telegram_webhook():
 _GROWTH_CALLBACKS = {"entre", "paso", "vendi", "revisar"}
 
 
+def _growth_callback_ok(cb_data: str) -> bool:
+    """Acepta los callbacks exactos y 'revisar:<PRODUCTO-USD>'."""
+    if cb_data in _GROWTH_CALLBACKS:
+        return True
+    if cb_data.startswith("revisar:"):
+        product = cb_data.split(":", 1)[1]
+        return product.replace("-", "").replace("_", "").isalnum() and len(product) <= 20
+    return False
+
+
 def _growth_chat_ok(chat_id) -> bool:
     """Solo procesar mensajes/clics que vengan del chat configurado."""
     expected = os.getenv("GROWTH_TELEGRAM_CHAT_ID", "")
@@ -224,7 +234,7 @@ def growth_telegram_webhook():
             chat_id = (cb.get("message") or {}).get("chat", {}).get("id")
             cb_data = cb.get("data", "")
             answer_callback(cb.get("id", ""))
-            if not _growth_chat_ok(chat_id) or cb_data not in _GROWTH_CALLBACKS:
+            if not _growth_chat_ok(chat_id) or not _growth_callback_ok(cb_data):
                 print(f"[GROWTH TG] Callback rechazado (chat {chat_id}, data {cb_data!r})")
                 return jsonify({"ok": True})
             print(f"[GROWTH TG] Boton: {cb_data}")
