@@ -13,3 +13,9 @@ services:
         sync: false
       - key: WEBHOOK_SECRET
         sync: false
+      - key: GROWTH_TELEGRAM_TOKEN
+        sync: false
+      - key: GROWTH_TELEGRAM_CHAT_ID
+        sync: false
+      - key: UTC_OFFSET_HOURS
+        sync: false

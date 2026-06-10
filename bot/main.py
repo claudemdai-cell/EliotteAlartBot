@@ -32,6 +32,25 @@ def start_scanner_thread():
         print(f"[MAIN] Error scanner: {e}")
 
 
+def start_growth_thread():
+    """Lanza el scanner del Reto 100->1000 con watchdog que lo reinicia si muere."""
+    def supervised():
+        import time
+        from growth.scanner import run_growth_scanner
+        while True:
+            try:
+                run_growth_scanner()
+            except Exception as e:
+                print(f"[GROWTH] Scanner cayo: {e}. Reiniciando en 30s...")
+                time.sleep(30)
+    try:
+        t = threading.Thread(target=supervised, daemon=True)
+        t.start()
+        print("[MAIN] Growth scanner (Reto 100->1000) iniciado.")
+    except Exception as e:
+        print(f"[MAIN] Error growth: {e}")
+
+
 def start_keepalive_thread():
     import time, requests as req
     def ping():
@@ -155,11 +174,62 @@ def telegram_webhook():
     return jsonify({"ok": True})
 
 
+# ─── ENDPOINTS GROWTH (Reto 100->1000) ───────────────────────────────────────
+
+@app.route("/growth-telegram", methods=["POST"])
+def growth_telegram_webhook():
+    """Recibe updates del bot de crecimiento y responde comandos."""
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"ok": True})
+    msg = data.get("message") or data.get("edited_message")
+    if not msg:
+        return jsonify({"ok": True})
+    text = msg.get("text", "")
+    if not text:
+        return jsonify({"ok": True})
+
+    print(f"[GROWTH TG] Mensaje: {text}")
+    try:
+        from growth.commands import handle_growth_command
+        from growth.alerts import send_growth_telegram
+        response = handle_growth_command(text)
+        if response:
+            send_growth_telegram(response)
+    except Exception as e:
+        print(f"[GROWTH TG] Error: {e}")
+    return jsonify({"ok": True})
+
+
+@app.route("/setup-growth-webhook", methods=["GET"])
+def setup_growth_webhook():
+    """Registra el webhook del bot de crecimiento."""
+    import requests
+    token = os.getenv("GROWTH_TELEGRAM_TOKEN")
+    if not token:
+        return jsonify({"error": "falta GROWTH_TELEGRAM_TOKEN"}), 400
+    url = f"https://api.telegram.org/bot{token}/setWebhook"
+    bot_url = os.getenv("BOT_URL", "https://eliottealartbot.onrender.com")
+    r = requests.post(url, json={"url": f"{bot_url}/growth-telegram"}, timeout=10)
+    return jsonify(r.json())
+
+
 # ─── ENDPOINTS ────────────────────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": "Elliott Alert Bot"})
+    info = {"status": "ok", "bot": "Elliott Alert Bot"}
+    try:
+        from growth import state as growth_state
+        gs = growth_state.load()
+        info["growth"] = {
+            "balance": gs.get("balance"),
+            "last_scan_ts": gs.get("last_scan_ts"),
+            "open_position": gs.get("open_position", {}).get("name") if gs.get("open_position") else None,
+        }
+    except Exception:
+        pass
+    return jsonify(info)
 
 
 @app.route("/webhook", methods=["POST"])
@@ -226,5 +296,6 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     print(f"Elliott Alert Bot en puerto {port}")
     start_scanner_thread()
+    start_growth_thread()
     start_keepalive_thread()
     app.run(host="0.0.0.0", port=port, debug=False)
