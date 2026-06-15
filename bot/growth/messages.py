@@ -27,10 +27,16 @@ def fmt_usd(amount: float) -> str:
 
 def logo_url(product: str) -> str:
     """
-    URL del logo de la crypto (CoinCap). product = 'OP-USD' -> simbolo 'op'.
-    Si no existe, Telegram simplemente no adjunta la foto.
+    URL del logo de la crypto. Primario: CoinCap. Fallback: CoinGecko CDN
+    para coins que CoinCap no tiene (ej. JTO).
     """
     sym = product.replace("-USD", "").replace("-USDT", "").lower()
+    # CoinGecko CDN para coins ausentes en CoinCap
+    _COINGECKO = {
+        "jto": "https://coin-images.coingecko.com/coins/images/33228/small/jto.png",
+    }
+    if sym in _COINGECKO:
+        return _COINGECKO[sym]
     return f"https://assets.coincap.io/assets/icons/{sym}@2x.png"
 
 

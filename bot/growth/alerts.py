@@ -62,16 +62,29 @@ def send_growth_telegram(text: str, buttons: list | None = None) -> bool:
     return False
 
 
+def _logo_url_exists(url: str) -> bool:
+    """HEAD request rapido para verificar que el logo existe antes de enviarlo."""
+    try:
+        r = requests.head(url, timeout=5, allow_redirects=True)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def send_growth_photo(photo_url: str, caption: str, buttons: list | None = None) -> bool:
     """
     Envia una foto (logo de la crypto) con caption y botones.
-    Si falla (logo no existe, caption muy largo, etc.), cae a mensaje de texto.
+    Verifica el URL antes de enviar; si falla cae a mensaje de texto.
     """
     if not TOKEN or not CHAT_ID:
         print("[GROWTH] Falta token/chat para enviar foto")
         return False
     # sendPhoto limita el caption a 1024 chars (sendMessage llega a 4096)
     if len(caption) > 1000:
+        return send_growth_telegram(caption, buttons=buttons)
+    # Pre-check: evita pasar URLs rotas a Telegram
+    if not _logo_url_exists(photo_url):
+        print(f"[GROWTH PHOTO] URL no disponible ({photo_url[:60]}) — fallback a texto")
         return send_growth_telegram(caption, buttons=buttons)
     url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
     payload = {
