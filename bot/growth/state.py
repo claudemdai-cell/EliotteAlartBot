@@ -55,6 +55,7 @@ _DEFAULT = {
     "last_scan_ts": None,
     "last_daily_summary": None,
     "last_weekly_summary": None,
+    "awaiting_entry_confirm": False,
 }
 
 
@@ -168,6 +169,11 @@ def pending_age_minutes() -> float | None:
         return None
 
 
+# Fee de Coinbase Advanced Trade: 0.60% taker (cuentas < $10K volumen/mes)
+# Se descuenta en la entrada y en la salida para calcular P&L real.
+COINBASE_FEE = 0.006
+
+
 def open_position_from_pending(entry_override: float | None = None) -> dict | None:
     """
     Convierte la senal pendiente en posicion abierta (cuando el user dice 'hecho').
@@ -178,15 +184,19 @@ def open_position_from_pending(entry_override: float | None = None) -> dict | No
     sig = s.get("pending_signal")
     if not sig:
         return None
-    size_usd = round(s["balance"] * sig.get("size_pct", 1.0), 2)
+    size_gross = round(s["balance"] * sig.get("size_pct", 1.0), 2)
+    fee_entry  = round(size_gross * COINBASE_FEE, 2)
+    # size_usd = capital real expuesto al mercado (tras pagar fee de entrada)
+    size_usd   = round(size_gross - fee_entry, 2)
     entry = float(entry_override) if entry_override else sig["price"]
     s["open_position"] = {
-        "product":  sig["product"],
-        "name":     sig["name"],
-        "entry":    entry,
-        "stop":     sig["stop"],
-        "target":   sig["target"],
-        "size_usd": size_usd,
+        "product":   sig["product"],
+        "name":      sig["name"],
+        "entry":     entry,
+        "stop":      sig["stop"],
+        "target":    sig["target"],
+        "size_gross": size_gross,  # lo que sacaste del balance
+        "size_usd":  size_usd,     # expuesto al mercado (tras fee de entrada)
         "opened_at": _now_iso(),
         "kind":     sig.get("kind", "breakout"),
         "score":    sig.get("score", 0),
@@ -215,18 +225,26 @@ def close_position(exit_price: float, result: str) -> dict:
     pos = s.get("open_position")
     if not pos:
         return {}
-    entry = pos["entry"]
-    pnl_pct = (exit_price - entry) / entry * 100 if entry else 0
-    size_usd = pos["size_usd"]
-    pnl_usd = size_usd * pnl_pct / 100
+    entry    = pos["entry"]
+    pnl_pct  = (exit_price - entry) / entry * 100 if entry else 0
+    size_usd = pos["size_usd"]          # capital expuesto (ya descontó fee entrada)
+    size_gross = pos.get("size_gross", size_usd)  # backwards compat
+
+    # Calcular P&L real: ganancias brutas menos fee de salida (0.60%)
+    exit_gross = size_usd * (1 + pnl_pct / 100)
+    fee_exit   = round(exit_gross * COINBASE_FEE, 4)
+    exit_net   = exit_gross - fee_exit
+    pnl_usd    = round(exit_net - size_gross, 2)  # vs lo que salió del balance
     new_balance = round(s["balance"] + pnl_usd, 2)
 
+    # pnl_pct real = pnl_usd / size_gross * 100 (incluye fees de entrada y salida)
+    real_pnl_pct = pnl_usd / size_gross * 100 if size_gross else 0
     s["trade_log"].append({
         "product":   pos["product"],
         "name":      pos["name"],
         "entry":     entry,
         "exit":      exit_price,
-        "pnl_pct":   round(pnl_pct, 2),
+        "pnl_pct":   round(real_pnl_pct, 2),
         "pnl_usd":   round(pnl_usd, 2),
         "result":    result,
         "kind":      pos.get("kind", "?"),
@@ -247,7 +265,7 @@ def close_position(exit_price: float, result: str) -> dict:
 
     save(s, important=True)
     return {
-        "pnl_pct": round(pnl_pct, 2),
+        "pnl_pct": round(real_pnl_pct, 2),
         "pnl_usd": round(pnl_usd, 2),
         "new_balance": new_balance,
         "name": pos["name"],

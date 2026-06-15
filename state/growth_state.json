@@ -1,0 +1,13 @@
+{
+  "open_positions": {
+    "ARB": {
+      "ticker": "ARB",
+      "entry_price": 0.0804,
+      "tp": 0.0951,
+      "sl": 0.0737,
+      "quantity": 1229.08,
+      "total_invested": 100.0,
+      "entry_date": "2026-06-11 04:12:31"
+    }
+  }
+}

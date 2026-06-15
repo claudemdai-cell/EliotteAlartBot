@@ -29,11 +29,84 @@ def handle_growth_command(text: str) -> str:
 
     # hecho [precio] — confirmar compra (acepta el precio real de entrada)
     first_word = low.split()[0] if low.split() else ""
-    if first_word in ("hecho", "/hecho", "comprado", "entre", "entré"):
+    first_base = first_word.split(":")[0]   # "entre:ARB-USD" → "entre"
+
+    # Producto incluido en el callback del botón: "entre:ARB-USD"
+    _callback_product = None
+    if ":" in first_word and first_base in ("entre", "entré", "paso"):
+        _callback_product = first_word.split(":", 1)[1].upper()
+
+    # sí / si — confirmar entrada cuando el bot pidió confirmación explícita
+    if low in ("sí", "si", "yes", "correcto", "confirmo"):
+        _s = state.load()
+        if _s.get("awaiting_entry_confirm"):
+            sig = _s.get("pending_signal")
+            _s["awaiting_entry_confirm"] = False
+            if not sig:
+                state.save(_s)
+                return "Ya no hay señal pendiente para registrar. Escribe /estado para ver cómo vamos."
+            age = state.pending_age_minutes()
+            if age is not None and age > 240:
+                state.set_pending(None)
+                state.save(_s)
+                return messages.signal_expired(sig.get("name", "?"), age / 60)
+            if age is not None and age > 30:
+                price_now = get_price(sig["product"])
+                now_txt = f" Ahora está en {messages.fmt_price(price_now)}." if price_now else ""
+                state.save(_s)
+                return (
+                    f"⏱️ Esa señal tiene {age:.0f} min.{now_txt}\n"
+                    f"¿A qué precio entraste? Responde: *hecho {messages._raw_num(price_now or sig['price'], sig.get('product'))}*"
+                )
+            state.save(_s)
+            pos = state.open_position_from_pending()
+            if not pos:
+                return "No pude registrar la entrada. Intenta de nuevo."
+            price_now = get_price(pos["product"])
+            pnl_txt = ""
+            if price_now:
+                pnl = (price_now - pos["entry"]) / pos["entry"] * 100
+                pnl_txt = f"\nAhora: {messages.fmt_price(price_now)} ({pnl:+.1f}%)"
+            return (
+                f"✅ *¡Registrado! {pos['name']}* en el libro. · {messages.SELLO}\n\n"
+                f"Entrada: {messages.fmt_price(pos['entry'])}"
+                + pnl_txt
+                + f"\nTarget: {messages.fmt_price(pos['target'])}\n"
+                + f"Stop:   {messages.fmt_price(pos['stop'])}\n\n"
+                + f"Lo vigilo 24/7 y te aviso cuando salir. 🦅"
+            )
+
+    if first_base in ("hecho", "/hecho", "comprado", "entre", "entré"):
         s = state.load()
         sig = s.get("pending_signal")
         if not sig:
             return "No tengo ninguna señal pendiente ahora mismo. Cuando dispare una, responde 'hecho'."
+
+        # Bug 1: verificar que la moneda del botón coincide con la señal pendiente
+        if _callback_product and sig.get("product") and _callback_product != sig["product"]:
+            pending_name = sig.get("name", sig["product"])
+            callback_name = _callback_product.replace("-USD", "")
+            return (
+                f"⚠️ *Espera — moneda incorrecta.*\n\n"
+                f"Tocaste ✅ Entré en *{callback_name}*, pero la señal "
+                f"que tengo pendiente es de *{pending_name}*.\n\n"
+                f"¿En cuál de las dos entraste realmente?\n"
+                f"• Si en *{pending_name}*: escribe *hecho*\n"
+                f"• Si en *{callback_name}*: escribe *hecho {callback_name}*"
+            )
+
+        # Sin callback de botón (texto plano): pedir confirmación antes de registrar
+        if _callback_product is None:
+            pending_name = sig.get("name", sig["product"].replace("-USD", ""))
+            s["awaiting_entry_confirm"] = True
+            state.save(s)
+            return (
+                f"⚠️ *¿Estamos en la misma página?* · {messages.SELLO}\n\n"
+                f"La señal que tengo pendiente es de *{pending_name}*.\n"
+                f"¿Entraste en *{pending_name}*?\n\n"
+                f"• ✅ Si sí → escribe *sí*\n"
+                f"• ❌ Si fue otra moneda → escribe *hecho [MONEDA]* (ej: *hecho ARB*)"
+            )
 
         # Senal demasiado vieja: expirar en vez de abrir con precio fantasma
         age = state.pending_age_minutes()
@@ -133,7 +206,7 @@ def handle_growth_command(text: str) -> str:
         return (text, messages.signal_buttons(res["sig"]))
 
     # paso — descartar la señal pendiente (no entré)
-    if low in ("paso", "/paso", "no", "skip"):
+    if first_base in ("paso", "/paso") or low in ("paso", "/paso", "no", "skip"):
         s = state.load()
         if not s.get("pending_signal"):
             return "No hay señal pendiente. Todo en orden. 👍"
