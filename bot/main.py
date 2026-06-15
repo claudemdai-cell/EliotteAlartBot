@@ -241,13 +241,23 @@ def growth_telegram_webhook():
             _send_growth_response(handle_growth_command(cb_data))
             return jsonify({"ok": True})
 
-        # Mensaje de texto normal
+        # Mensaje de texto o foto normal
         msg = data.get("message") or data.get("edited_message")
         if not msg:
             return jsonify({"ok": True})
         if not _growth_chat_ok(msg.get("chat", {}).get("id")):
             print("[GROWTH TG] Mensaje de chat desconocido, ignorado")
             return jsonify({"ok": True})
+
+        # Foto enviada por el usuario (captura de orden de Coinbase)
+        photo = msg.get("photo")
+        if photo:
+            from growth.commands import handle_growth_photo
+            caption = msg.get("caption", "")
+            print(f"[GROWTH TG] Foto recibida. Caption: {caption!r}")
+            _send_growth_response(handle_growth_photo(photo, caption))
+            return jsonify({"ok": True})
+
         text = msg.get("text", "")
         if not text:
             return jsonify({"ok": True})

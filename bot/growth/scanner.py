@@ -117,7 +117,8 @@ def monitor_position() -> None:
     # Target alcanzado
     if price >= pos["target"]:
         res = state.close_position(price, "target")
-        msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
+        msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"],
+                                   close_result=res)
         send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] TARGET {pos['name']} +{res['pnl_pct']}%")
         return
@@ -125,7 +126,8 @@ def monitor_position() -> None:
     # Stop tocado
     if price <= pos["stop"]:
         res = state.close_position(price, "stop")
-        msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"])
+        msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"],
+                                 close_result=res)
         send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] STOP {pos['name']} {res['pnl_pct']}%")
         return

@@ -56,6 +56,9 @@ _DEFAULT = {
     "last_daily_summary": None,
     "last_weekly_summary": None,
     "awaiting_entry_confirm": False,
+    # Feature: pedir captura de orden tras confirmar entrada
+    "awaiting_order_photo": False,
+    "pending_entry_override": None,  # precio guardado mientras esperamos la foto
 }
 
 
@@ -196,6 +199,7 @@ def open_position_from_pending(entry_override: float | None = None) -> dict | No
         "stop":      sig["stop"],
         "target":    sig["target"],
         "size_gross": size_gross,  # lo que sacaste del balance
+        "fee_entry": fee_entry,    # comisión pagada en la entrada (0.6% de size_gross)
         "size_usd":  size_usd,     # expuesto al mercado (tras fee de entrada)
         "opened_at": _now_iso(),
         "kind":     sig.get("kind", "breakout"),
@@ -204,6 +208,9 @@ def open_position_from_pending(entry_override: float | None = None) -> dict | No
         "last_progress_pnl": 0.0, # ultimo % notificado en avisos de progreso
         "last_progress_ts": None,
     }
+    # Limpiar flags de captura pendiente
+    s["awaiting_order_photo"] = False
+    s["pending_entry_override"] = None
     s["pending_signal"] = None
     # registrar conteo de senales del dia
     today = datetime.date.today().isoformat()
@@ -230,12 +237,21 @@ def close_position(exit_price: float, result: str) -> dict:
     size_usd = pos["size_usd"]          # capital expuesto (ya descontó fee entrada)
     size_gross = pos.get("size_gross", size_usd)  # backwards compat
 
-    # Calcular P&L real: ganancias brutas menos fee de salida (0.60%)
+    # Comisión de entrada (guardada en la posición; retrocompat: recalcular)
+    fee_entry_usd = round(pos.get("fee_entry", size_gross * COINBASE_FEE), 4)
+
+    # P&L bruto: movimiento de precio sobre el capital expuesto
+    gross_pnl_usd = round(size_usd * pnl_pct / 100, 4)
+
+    # Fee de salida sobre el valor total que recibimos del mercado
     exit_gross = size_usd * (1 + pnl_pct / 100)
-    fee_exit   = round(exit_gross * COINBASE_FEE, 4)
-    exit_net   = exit_gross - fee_exit
-    pnl_usd    = round(exit_net - size_gross, 2)  # vs lo que salió del balance
-    new_balance = round(s["balance"] + pnl_usd, 2)
+    fee_exit_usd = round(exit_gross * COINBASE_FEE, 4)
+    exit_net   = exit_gross - fee_exit_usd
+
+    # P&L neto = lo que realmente queda vs lo que salió del balance
+    fee_total_usd = round(fee_entry_usd + fee_exit_usd, 4)
+    pnl_usd       = round(exit_net - size_gross, 2)
+    new_balance   = round(s["balance"] + pnl_usd, 2)
 
     # pnl_pct real = pnl_usd / size_gross * 100 (incluye fees de entrada y salida)
     real_pnl_pct = pnl_usd / size_gross * 100 if size_gross else 0
@@ -265,11 +281,17 @@ def close_position(exit_price: float, result: str) -> dict:
 
     save(s, important=True)
     return {
-        "pnl_pct": round(real_pnl_pct, 2),
-        "pnl_usd": round(pnl_usd, 2),
-        "new_balance": new_balance,
-        "name": pos["name"],
-        "result": result,
+        "pnl_pct":      round(real_pnl_pct, 2),
+        "pnl_usd":      round(pnl_usd, 2),
+        "new_balance":  new_balance,
+        "name":         pos["name"],
+        "result":       result,
+        # Desglose de comisiones (Feature 1)
+        "gross_pnl_usd":  round(gross_pnl_usd, 2),
+        "fee_entry_usd":  round(fee_entry_usd, 2),
+        "fee_exit_usd":   round(fee_exit_usd, 2),
+        "fee_total_usd":  round(fee_total_usd, 2),
+        "size_gross":     size_gross,
     }
 
 

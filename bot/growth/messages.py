@@ -67,49 +67,83 @@ def buy_signal(sig: dict, balance: float, size_usd: float) -> str:
 
     product = sig.get("product", f"{name}-USD")
 
+    # Números crudos para copiar directamente en Coinbase (sin $, sin comas)
+    target_raw = _raw_num(target, product)
+    stop_raw   = _raw_num(stop, product)
+
+    # Coinbase cobra ~0.60% taker en la entrada
+    fee_usd  = round(size_usd * 0.006, 2)
+    net_usd  = round(size_usd - fee_usd, 2)
+
     return (
         f"{titulo} · {SELLO}\n\n"
         f"🎯 *{name}/USD* · {fmt_price(price)}\n"
         f"🆔 Búscalo en Coinbase como: `{product}`\n"
         f"{gancho}\n\n"
         f"📈 *LA JUGADA*\n"
-        f"💵 Entra con: *{fmt_usd(size_usd)}*\n"
-        f"🎯 Target: {fmt_price(target)} ({tgt_pct:+.0f}%)\n"
-        f"🛑 Stop: {fmt_price(stop)} ({stop_pct:.0f}%)\n"
+        f"💵 Entra con: *{fmt_usd(size_usd)}* (neto ~{fmt_usd(net_usd)} tras fee)\n"
+        f"🎯 Target: {fmt_price(target)} ({tgt_pct:+.0f}%) → copia: `{target_raw}`\n"
+        f"🛑 Stop:   {fmt_price(stop)} ({stop_pct:.0f}%) → copia: `{stop_raw}`\n"
         f"⚖️ R/R 1:{rr} — ganas {rr:.1f}x lo que arriesgas\n\n"
         f"🔍 *POR QUÉ AHORA*\n{reasons}\n\n"
         f"🏆 Vamos {fmt_usd(balance)} de ${goal:,}. Si pega,\n"
         f"saltamos a ~{fmt_usd(next_balance)}. Paso a paso.\n\n"
-        f'Responde *"hecho"* y lo vigilo 24/7.'
+        f'Toca ✅ *Entré* (o escribe "hecho") y lo vigilo 24/7.'
     )
 
 
-def sell_target(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float) -> str:
+def fmt_pnl_breakdown(close_result: dict) -> str:
+    """
+    Formatea el desglose de P&L con comisiones.
+    Retorna string multi-línea para usar en mensajes de cierre.
+    """
+    gross = close_result.get("gross_pnl_usd")
+    fee_t = close_result.get("fee_total_usd")
+    net   = close_result.get("pnl_usd")
+    net_pct = close_result.get("pnl_pct", 0)
+    if gross is None or fee_t is None:
+        # Sin datos de desglose (retrocompat)
+        return f"Resultado: *{net_pct:+.1f}%* ({fmt_usd(net)})"
+    sign = "+" if gross >= 0 else ""
+    return (
+        f"P&L bruto:  {sign}{fmt_usd(gross)}\n"
+        f"Comisiones: -{fmt_usd(fee_t)} (entrada + salida)\n"
+        f"*P&L neto:  {'+' if net >= 0 else ''}{fmt_usd(net)} ({net_pct:+.1f}%)*"
+    )
+
+
+def sell_target(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float,
+                close_result: dict | None = None) -> str:
+    breakdown = fmt_pnl_breakdown(close_result) if close_result else f"Ganancia: *{pnl_pct:+.1f}%* 🎉"
     return (
         f"✅ *VENDE {name}* · {SELLO}\n\n"
         f"Llegó al target: {fmt_price(exit_price)}\n"
-        f"Ganancia: *{pnl_pct:+.1f}%* 🎉\n\n"
+        f"{breakdown}\n\n"
         f"Balance: {fmt_usd(old_bal)} → *{fmt_usd(new_bal)}*\n"
         f"Vende todo y esperamos la próxima.\n\n"
         f'Responde *"vendido"* para registrarlo.'
     )
 
 
-def sell_stop(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float) -> str:
+def sell_stop(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float,
+              close_result: dict | None = None) -> str:
+    breakdown = fmt_pnl_breakdown(close_result) if close_result else None
     # Stop trailing con ganancia: no es una perdida, es una salida protegida
     if pnl_pct >= 0:
+        result_line = breakdown or f"Resultado: *{pnl_pct:+.1f}%* — el trailing funcionó. 😎"
         return (
             f"🔒 *VENDE {name} — ganancia protegida* · {SELLO}\n\n"
             f"Tocó el stop que subimos: {fmt_price(exit_price)}\n"
-            f"Resultado: *{pnl_pct:+.1f}%* — el trailing funcionó. 😎\n\n"
+            f"{result_line}\n\n"
             f"Balance: {fmt_usd(old_bal)} → *{fmt_usd(new_bal)}*\n"
             f"Vende todo y vamos por la próxima.\n\n"
             f'Responde *"vendido"* para registrarlo.'
         )
+    result_line = breakdown or f"Pérdida: *{pnl_pct:.1f}%*"
     return (
         f"⚠️ *SAL DE {name}* · {SELLO}\n\n"
         f"Tocó el stop: {fmt_price(exit_price)}\n"
-        f"Pérdida: *{pnl_pct:.1f}%*\n\n"
+        f"{result_line}\n\n"
         f"Balance: {fmt_usd(old_bal)} → *{fmt_usd(new_bal)}*\n"
         f"Cortamos aquí. Cuidamos el capital,\n"
         f"el próximo setup llega pronto. 💪\n\n"
@@ -185,9 +219,22 @@ def status(s: dict, current_price: float | None = None) -> str:
     pos = s.get("open_position")
     if pos:
         if current_price:
-            pnl = _pct(pos["entry"], current_price)
-            lines.append(f"\nPosición abierta: *{pos['name']}* ({pnl:+.1f}%)")
-            lines.append(f"  Ahora {fmt_price(current_price)} | Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
+            gross_pct = _pct(pos["entry"], current_price)
+            size_usd  = pos.get("size_usd", pos.get("size_gross", 0))
+            size_gross = pos.get("size_gross", size_usd)
+            # Estimar comisiones para dar P&L neto aproximado
+            fee_entry = pos.get("fee_entry", round(size_gross * 0.006, 2))
+            exit_gross_est = size_usd * (1 + gross_pct / 100)
+            fee_exit_est = round(exit_gross_est * 0.006, 2)
+            fee_total_est = round(fee_entry + fee_exit_est, 2)
+            gross_pnl_est = round(size_usd * gross_pct / 100, 2)
+            net_pnl_est = round(gross_pnl_est - fee_entry - fee_exit_est, 2)
+            net_pct_est = net_pnl_est / size_gross * 100 if size_gross else 0
+            lines.append(f"\nPosición abierta: *{pos['name']}*")
+            lines.append(
+                f"  {fmt_price(current_price)} · bruto {gross_pct:+.1f}% | neto ~{net_pct_est:+.1f}% (fees ~{fmt_usd(fee_total_est)})"
+            )
+            lines.append(f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
         else:
             lines.append(f"\nPosición abierta: *{pos['name']}*")
             lines.append(f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
@@ -256,8 +303,10 @@ def signal_buttons(sig: dict) -> list:
     # El boton lleva la moneda dentro: aunque la senal haya expirado o el bot
     # se haya reiniciado, siempre puede re-analizar ese par al instante.
     revisar_data = f"revisar:{product}" if product else "revisar"
+    entre_data = f"entre:{product}" if product else "entre"
+    paso_data  = f"paso:{product}"  if product else "paso"
     return [
-        [("✅ Entré", "entre"), ("🚫 Paso", "paso")],
+        [("✅ Entré", entre_data), ("🚫 Paso", paso_data)],
         [("🔄 ¿Sigue válida?", revisar_data)],
         [(f"📋 Target {t}", {"copy": t}),
          (f"📋 Stop {s}",   {"copy": s})],
@@ -349,7 +398,7 @@ def trailing_update(name: str, level: int, new_stop: float, pnl_pct: float) -> s
             f"Vas {pnl_pct:+.1f}%. Mueve tu stop a *{fmt_price(new_stop)}*\n"
             f"(tu precio de entrada). A partir de aquí,\n"
             f"*este trade ya no puede hacerte perder.* 😤\n\n"
-            f"📋 Stop nuevo abajo para copiar."
+                   f"📋 Stop nuevo abajo para copiar."
         )
     return (
         f"🔒 *{name}: asegurando ganancia* · {SELLO}\n\n"
@@ -399,4 +448,6 @@ def welcome() -> str:
         "Para empezar, dime tu capital con */balance 100*\n"
         "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
         "_Meta: llevar $100 a $1,000. Sin apuro, con cabeza._"
+    )
+ a $1,000. Sin apuro, con cabeza._"
     )
