@@ -267,6 +267,15 @@ def handle_growth_command(text: str) -> str:
     raw = text.strip()
     low = raw.lower()
 
+    # /update — progreso completo del reto en tiempo real
+    if low in ("update", "/update", "actualizacion", "actualización", "actualizar", "/actualizar"):
+        s = state.load()
+        price = None
+        if s.get("open_position"):
+            price = get_price(s["open_position"]["product"])
+        text = messages.update_message(s, price)
+        return (text, [[("🔄 Actualizar", "update")]])
+
     # ── Fallback manual mientras esperamos foto de orden ─────────────────────
     if low in ("manual", "saltar", "skip", "sin foto"):
         _s = state.load()

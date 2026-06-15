@@ -293,21 +293,19 @@ def signal_buttons(sig: dict) -> list:
     """
     Botonera estandar de una senal de compra:
       [✅ Entré] [🚫 Paso]
-      [🔄 ¿Sigue válida?]
+      [🔄 ¿Sigue válida?] [📊 Update]
       [📋 Target ...] [📋 Stop ...]
     Los botones 📋 copian el numero con los decimales exactos que acepta Coinbase.
     """
     product = sig.get("product")
     t = _raw_num(sig["target"], product)
     s = _raw_num(sig["stop"], product)
-    # El boton lleva la moneda dentro: aunque la senal haya expirado o el bot
-    # se haya reiniciado, siempre puede re-analizar ese par al instante.
     revisar_data = f"revisar:{product}" if product else "revisar"
     entre_data = f"entre:{product}" if product else "entre"
     paso_data  = f"paso:{product}"  if product else "paso"
     return [
         [("✅ Entré", entre_data), ("🚫 Paso", paso_data)],
-        [("🔄 ¿Sigue válida?", revisar_data)],
+        [("🔄 ¿Sigue válida?", revisar_data), ("📊 Update", "update")],
         [(f"📋 Target {t}", {"copy": t}),
          (f"📋 Stop {s}",   {"copy": s})],
     ]
@@ -449,5 +447,123 @@ def welcome() -> str:
         "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
         "_Meta: llevar $100 a $1,000. Sin apuro, con cabeza._"
     )
- a $1,000. Sin apuro, con cabeza._"
-    )
+
+
+def update_message(s: dict, current_price: float | None = None) -> str:
+    """
+    Mensaje completo de progreso del reto: balance, posición, señal y scanner.
+    """
+    import datetime
+
+    balance = s["balance"]
+    start   = s.get("start_balance", balance)
+    goal    = 1000
+
+    # ── 1. PROGRESO DEL RETO ──────────────────────────────────────────────────
+    progress_pct = (balance - start) / (goal - start) * 100 if (goal - start) > 0 else 0
+    progress_pct = max(0.0, min(100.0, progress_pct))
+    filled = int(progress_pct / 10)
+    bar = "▓" * filled + "░" * (10 - filled)
+
+    gain_usd = round(balance - start, 2)
+    gain_pct = (balance - start) / start * 100 if start else 0
+
+    days_elapsed = 0
+    if s.get("started_at"):
+        try:
+            started = datetime.datetime.fromisoformat(s["started_at"])
+            days_elapsed = max(0, (datetime.datetime.utcnow() - started).days)
+        except Exception:
+            pass
+
+    trade_log   = s.get("trade_log", [])
+    wins        = sum(1 for t in trade_log if t.get("pnl_pct", 0) > 0)
+    losses      = sum(1 for t in trade_log if t.get("pnl_pct", 0) <= 0)
+    total_trades = wins + losses
+    win_rate    = wins / total_trades * 100 if total_trades else 0
+
+    est_line = ""
+    if days_elapsed > 0 and gain_usd > 0:
+        daily_rate = gain_usd / days_elapsed
+        remaining  = goal - balance
+        if daily_rate > 0 and remaining > 0:
+            est_days = int(remaining / daily_rate)
+            est_line = f"\n⏱️ A este ritmo llegas en ~{est_days} días"
+
+    lines = [
+        f"📊 *{SELLO} — Update*\n",
+        f"💰 *PROGRESO DEL RETO*",
+        f"Balance: *{fmt_usd(balance)}* → Meta: ${goal:,}",
+        f"[{bar}] {progress_pct:.0f}%",
+        f"Ganancia total: *{fmt_usd(gain_usd)}* ({gain_pct:+.1f}%)",
+        f"Días: {days_elapsed} | Trades: {wins}G / {losses}P | Win rate: {win_rate:.0f}%",
+    ]
+    if est_line:
+        lines.append(est_line)
+
+    # ── 2. POSICIÓN ABIERTA ───────────────────────────────────────────────────
+    pos = s.get("open_position")
+    if pos:
+        lines.append(f"\n📍 *POSICIÓN ABIERTA — {pos['name']}*")
+        if current_price:
+            entry      = pos["entry"]
+            size_usd   = pos.get("size_usd", pos.get("size_gross", 0))
+            size_gross = pos.get("size_gross", size_usd)
+            gross_pct  = (current_price - entry) / entry * 100 if entry else 0
+            fee_entry  = pos.get("fee_entry", round(size_gross * 0.006, 2))
+            exit_gross = size_usd * (1 + gross_pct / 100)
+            fee_exit   = round(exit_gross * 0.006, 2)
+            fee_total  = round(fee_entry + fee_exit, 2)
+            gross_pnl  = round(size_usd * gross_pct / 100, 2)
+            net_pnl    = round(gross_pnl - fee_entry - fee_exit, 2)
+            net_pct    = net_pnl / size_gross * 100 if size_gross else 0
+            dist_target = (pos["target"] - current_price) / current_price * 100 if current_price else 0
+            dist_stop   = (current_price - pos["stop"]) / current_price * 100 if current_price else 0
+            pnl_sign   = "+" if net_pnl >= 0 else ""
+
+            lines.append(
+                f"Entrada: {fmt_price(entry)} | Ahora: {fmt_price(current_price)}"
+            )
+            lines.append(
+                f"P&L: *{pnl_sign}{fmt_usd(net_pnl)}* ({net_pct:+.1f}% neto) · fees ~{fmt_usd(fee_total)}"
+            )
+            lines.append(
+                f"Target: {fmt_price(pos['target'])} (+{dist_target:.1f}% restante)"
+            )
+            lines.append(
+                f"Stop:   {fmt_price(pos['stop'])} (-{dist_stop:.1f}% buffer)"
+            )
+        else:
+            lines.append(f"Entrada: {fmt_price(pos['entry'])}")
+            lines.append(f"Target: {fmt_price(pos['target'])} | Stop: {fmt_price(pos['stop'])}")
+
+        opened_at = pos.get("opened_at")
+        if opened_at:
+            try:
+                opened  = datetime.datetime.fromisoformat(opened_at)
+                elapsed = (datetime.datetime.utcnow() - opened).total_seconds()
+                hours   = elapsed / 3600
+                time_txt = f"{hours/24:.1f} días" if hours >= 24 else f"{hours:.1f}h"
+                lines.append(f"Abierta hace: {time_txt}")
+            except Exception:
+                pass
+
+    # ── 3. SEÑAL PENDIENTE ────────────────────────────────────────────────────
+    sig = s.get("pending_signal")
+    if sig and not pos:
+        sig_age = ""
+        if sig.get("created_at"):
+            try:
+                created = datetime.datetime.fromisoformat(sig["created_at"])
+                mins    = (datetime.datetime.utcnow() - created).total_seconds() / 60
+                sig_age = f"hace {mins/60:.1f}h" if mins >= 60 else f"hace {int(mins)} min"
+            except Exception:
+                pass
+        lines.append(f"\n🎯 *SEÑAL PENDIENTE — {sig.get('name', '?')}*")
+        lines.append(f"Precio señal: {fmt_price(sig.get('price', 0))} · {sig_age}")
+
+    # ── 4. ESTADO DEL SCANNER ─────────────────────────────────────────────────
+    lines.append(f"\n🤖 *SCANNER*")
+    lines.append(_alive_line(s))
+
+    return "\n".join(lines)
