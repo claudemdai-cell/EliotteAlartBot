@@ -1,5 +1,14 @@
 {
   "open_positions": {
+    "JTO": {
+      "ticker": "JTO",
+      "entry_price": 0.75340,
+      "tp": 0.85880,
+      "sl": 0.70070,
+      "quantity": 158.1,
+      "total_invested": 119.0,
+      "entry_date": "2026-06-15 10:50:00"
+    },
     "ARB": {
       "ticker": "ARB",
       "entry_price": 0.0804,
