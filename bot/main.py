@@ -291,10 +291,11 @@ def health():
     try:
         from growth import state as growth_state
         gs = growth_state.load()
+        positions = gs.get("open_positions", {})
         info["growth"] = {
             "balance": gs.get("balance"),
             "last_scan_ts": gs.get("last_scan_ts"),
-            "open_position": gs.get("open_position", {}).get("name") if gs.get("open_position") else None,
+            "open_positions": list(positions.keys()) if positions else [],
         }
     except Exception:
         pass
