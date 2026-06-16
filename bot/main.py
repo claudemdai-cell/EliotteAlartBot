@@ -192,12 +192,13 @@ _GROWTH_CALLBACKS = {"entre", "paso", "vendi", "revisar", "update"}
 
 
 def _growth_callback_ok(cb_data: str) -> bool:
-    """Acepta los callbacks exactos y 'revisar:<PRODUCTO-USD>'."""
+    """Acepta los callbacks exactos y los patrones 'revisar:<PRODUCTO>' / 'vendi:<PRODUCTO>'."""
     if cb_data in _GROWTH_CALLBACKS:
         return True
-    if cb_data.startswith("revisar:"):
-        product = cb_data.split(":", 1)[1]
-        return product.replace("-", "").replace("_", "").isalnum() and len(product) <= 20
+    for prefix in ("revisar:", "vendi:", "entre:", "paso:"):
+        if cb_data.startswith(prefix):
+            product = cb_data.split(":", 1)[1]
+            return product.replace("-", "").replace("_", "").isalnum() and len(product) <= 20
     return False
 
 

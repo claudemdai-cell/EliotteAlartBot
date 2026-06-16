@@ -212,7 +212,32 @@ def position_open(pos: dict, current_price: float) -> str:
     )
 
 
-def status(s: dict, current_price: float | None = None) -> str:
+def _pos_pnl_lines(pos: dict, price: float) -> list[str]:
+    """Genera líneas de P&L para una posición dado su precio actual."""
+    entry      = pos["entry"]
+    size_usd   = pos.get("size_usd", pos.get("size_gross", 0))
+    size_gross = pos.get("size_gross", size_usd)
+    gross_pct  = _pct(entry, price)
+    fee_entry  = pos.get("fee_entry", round(size_gross * 0.006, 2))
+    exit_gross = size_usd * (1 + gross_pct / 100)
+    fee_exit   = round(exit_gross * 0.006, 2)
+    fee_total  = round(fee_entry + fee_exit, 2)
+    net_pnl    = round(size_usd * gross_pct / 100 - fee_entry - fee_exit, 2)
+    net_pct    = net_pnl / size_gross * 100 if size_gross else 0
+    return [
+        f"  {fmt_price(price)} · bruto {gross_pct:+.1f}% | neto ~{net_pct:+.1f}% (fees ~{fmt_usd(fee_total)})",
+        f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}",
+    ]
+
+
+def status(s: dict, prices: dict | float | None = None) -> str:
+    """
+    prices puede ser:
+      - dict {product: float}  — multi-posición (nuevo)
+      - float                  — legado, una sola posición
+      - None                   — sin precio disponible
+    """
+    import datetime
     balance = s["balance"]
     start = s["start_balance"]
     growth = _pct(start, balance)
@@ -222,28 +247,25 @@ def status(s: dict, current_price: float | None = None) -> str:
         f"Balance: *{fmt_usd(balance)}* ({growth:+.0f}%)",
         f"Meta: $1,000",
     ]
-    pos = s.get("open_position")
-    if pos:
-        if current_price:
-            gross_pct = _pct(pos["entry"], current_price)
-            size_usd  = pos.get("size_usd", pos.get("size_gross", 0))
-            size_gross = pos.get("size_gross", size_usd)
-            # Estimar comisiones para dar P&L neto aproximado
-            fee_entry = pos.get("fee_entry", round(size_gross * 0.006, 2))
-            exit_gross_est = size_usd * (1 + gross_pct / 100)
-            fee_exit_est = round(exit_gross_est * 0.006, 2)
-            fee_total_est = round(fee_entry + fee_exit_est, 2)
-            gross_pnl_est = round(size_usd * gross_pct / 100, 2)
-            net_pnl_est = round(gross_pnl_est - fee_entry - fee_exit_est, 2)
-            net_pct_est = net_pnl_est / size_gross * 100 if size_gross else 0
-            lines.append(f"\nPosición abierta: *{pos['name']}*")
-            lines.append(
-                f"  {fmt_price(current_price)} · bruto {gross_pct:+.1f}% | neto ~{net_pct_est:+.1f}% (fees ~{fmt_usd(fee_total_est)})"
-            )
-            lines.append(f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
+
+    positions = s.get("open_positions") or {}
+    # compat legado: si solo viene un float, construimos el dict
+    if isinstance(prices, (int, float)):
+        legacy_pos = s.get("open_position")
+        if legacy_pos:
+            prices = {legacy_pos["product"]: float(prices)}
         else:
-            lines.append(f"\nPosición abierta: *{pos['name']}*")
-            lines.append(f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
+            prices = {}
+    prices = prices or {}
+
+    if positions:
+        for product, pos in positions.items():
+            price = prices.get(product)
+            lines.append(f"\n📍 *{pos['name']}* — en posición")
+            if price:
+                lines.extend(_pos_pnl_lines(pos, price))
+            else:
+                lines.append(f"  Target {fmt_price(pos['target'])} | Stop {fmt_price(pos['stop'])}")
     elif s.get("pending_signal"):
         lines.append(f"\nSeñal pendiente: *{s['pending_signal']['name']}* — responde 'hecho' si entraste.")
     else:
@@ -252,7 +274,6 @@ def status(s: dict, current_price: float | None = None) -> str:
     if s.get("paused"):
         lines.append("\n⏸️ Bot en *pausa*. Escribe /reanudar para seguir.")
     if s.get("cooldown_until"):
-        import datetime
         try:
             if datetime.datetime.utcnow() < datetime.datetime.fromisoformat(s["cooldown_until"]):
                 lines.append("\n🧊 En enfriamiento tras 2 pérdidas. Espero mejor momento.")
@@ -283,6 +304,10 @@ def help_text() -> str:
     return (
         f"🚀 *{SELLO} — Comandos*\n\n"
         "/estado — balance, posición y si estoy vivo\n"
+        "/update — progreso detallado con P&L en tiempo real\n"
+        "/abrir COIN entrada target stop monto — registrar posición ya abierta\n"
+        "/precio COIN — precio spot inmediato (ej: /precio SOL)\n"
+        "/historial — últimos trades cerrados\n"
         "/balance <monto> — fijar/ajustar tu capital\n"
         "/pausa — el bot deja de mandar señales\n"
         "/reanudar — reactivar señales\n"
@@ -290,6 +315,9 @@ def help_text() -> str:
         "Cuando llegue una señal, te saldrán botones:\n"
         "✅ *Entré* · 🚫 *Paso* · 💰 *Vendí*\n"
         "(o escríbelos a mano si prefieres)\n\n"
+        "Lenguaje natural:\n"
+        "• *qué tal* / *cómo vamos* → resumen rápido\n"
+        "• *cómo va JTO* → P&L de una posición\n\n"
         "_Yo busco el setup y te explico el porqué.\n"
         "Tú pones la orden en Coinbase. Equipo._"
     )
@@ -499,9 +527,10 @@ def fill_price_confirmed(pos: dict, breakeven: float, price_now: float | None = 
     )
 
 
-def update_message(s: dict, current_price: float | None = None) -> str:
+def update_message(s: dict, prices: dict | float | None = None) -> str:
     """
-    Mensaje completo de progreso del reto: balance, posición, señal y scanner.
+    Mensaje completo de progreso del reto: balance, posiciones, señal, scanner.
+    prices: dict {product: float} (nuevo) o float legado o None.
     """
     import datetime
 
@@ -551,56 +580,54 @@ def update_message(s: dict, current_price: float | None = None) -> str:
     if est_line:
         lines.append(est_line)
 
-    # ── 2. POSICIÓN ABIERTA ───────────────────────────────────────────────────
-    pos = s.get("open_position")
-    if pos:
-        lines.append(f"\n📍 *POSICIÓN ABIERTA — {pos['name']}*")
-        if current_price:
-            entry      = pos["entry"]
-            size_usd   = pos.get("size_usd", pos.get("size_gross", 0))
-            size_gross = pos.get("size_gross", size_usd)
-            gross_pct  = (current_price - entry) / entry * 100 if entry else 0
-            fee_entry  = pos.get("fee_entry", round(size_gross * 0.006, 2))
-            exit_gross = size_usd * (1 + gross_pct / 100)
-            fee_exit   = round(exit_gross * 0.006, 2)
-            fee_total  = round(fee_entry + fee_exit, 2)
-            gross_pnl  = round(size_usd * gross_pct / 100, 2)
-            net_pnl    = round(gross_pnl - fee_entry - fee_exit, 2)
-            net_pct    = net_pnl / size_gross * 100 if size_gross else 0
-            dist_target = (pos["target"] - current_price) / current_price * 100 if current_price else 0
-            dist_stop   = (current_price - pos["stop"]) / current_price * 100 if current_price else 0
-            pnl_sign   = "+" if net_pnl >= 0 else ""
+    # ── 2. POSICIONES ABIERTAS ────────────────────────────────────────────────
+    # Compat: si prices es float legado, construimos dict
+    if isinstance(prices, (int, float)):
+        legacy_pos = s.get("open_position")
+        prices = {legacy_pos["product"]: float(prices)} if legacy_pos else {}
+    prices = prices or {}
 
-            lines.append(
-                f"Entrada: {fmt_price(entry)} | Ahora: {fmt_price(current_price)}"
-            )
-            lines.append(
-                f"P&L: *{pnl_sign}{fmt_usd(net_pnl)}* ({net_pct:+.1f}% neto) · fees ~{fmt_usd(fee_total)}"
-            )
-            lines.append(
-                f"Target: {fmt_price(pos['target'])} (+{dist_target:.1f}% restante)"
-            )
-            lines.append(
-                f"Stop:   {fmt_price(pos['stop'])} (-{dist_stop:.1f}% buffer)"
-            )
-        else:
-            lines.append(f"Entrada: {fmt_price(pos['entry'])}")
-            lines.append(f"Target: {fmt_price(pos['target'])} | Stop: {fmt_price(pos['stop'])}")
-
-        opened_at = pos.get("opened_at")
-        if opened_at:
-            try:
-                opened  = datetime.datetime.fromisoformat(opened_at)
-                elapsed = (datetime.datetime.utcnow() - opened).total_seconds()
-                hours   = elapsed / 3600
-                time_txt = f"{hours/24:.1f} días" if hours >= 24 else f"{hours:.1f}h"
-                lines.append(f"Abierta hace: {time_txt}")
-            except Exception:
-                pass
+    positions = s.get("open_positions") or {}
+    if positions:
+        for product, pos in positions.items():
+            price = prices.get(product)
+            lines.append(f"\n📍 *POSICIÓN: {pos['name']}*")
+            if price:
+                entry      = pos["entry"]
+                size_usd   = pos.get("size_usd", pos.get("size_gross", 0))
+                size_gross = pos.get("size_gross", size_usd)
+                gross_pct  = _pct(entry, price)
+                fee_entry  = pos.get("fee_entry", round(size_gross * 0.006, 2))
+                exit_gross = size_usd * (1 + gross_pct / 100)
+                fee_exit   = round(exit_gross * 0.006, 2)
+                fee_total  = round(fee_entry + fee_exit, 2)
+                net_pnl    = round(size_usd * gross_pct / 100 - fee_entry - fee_exit, 2)
+                net_pct    = net_pnl / size_gross * 100 if size_gross else 0
+                dist_tgt   = (pos["target"] - price) / price * 100 if price else 0
+                dist_stp   = (price - pos["stop"]) / price * 100 if price else 0
+                pnl_sign   = "+" if net_pnl >= 0 else ""
+                lines.append(f"Entrada: {fmt_price(entry)} | Ahora: {fmt_price(price)}")
+                lines.append(
+                    f"P&L: *{pnl_sign}{fmt_usd(net_pnl)}* ({net_pct:+.1f}% neto) · fees ~{fmt_usd(fee_total)}"
+                )
+                lines.append(f"Target: {fmt_price(pos['target'])} (+{dist_tgt:.1f}% restante)")
+                lines.append(f"Stop:   {fmt_price(pos['stop'])} (-{dist_stp:.1f}% buffer)")
+            else:
+                lines.append(f"Entrada: {fmt_price(pos['entry'])}")
+                lines.append(f"Target: {fmt_price(pos['target'])} | Stop: {fmt_price(pos['stop'])}")
+            opened_at = pos.get("opened_at")
+            if opened_at:
+                try:
+                    opened  = datetime.datetime.fromisoformat(opened_at)
+                    hours   = (datetime.datetime.utcnow() - opened).total_seconds() / 3600
+                    time_txt = f"{hours/24:.1f} días" if hours >= 24 else f"{hours:.1f}h"
+                    lines.append(f"Abierta hace: {time_txt}")
+                except Exception:
+                    pass
 
     # ── 3. SEÑAL PENDIENTE ────────────────────────────────────────────────────
     sig = s.get("pending_signal")
-    if sig and not pos:
+    if sig and not positions:
         sig_age = ""
         if sig.get("created_at"):
             try:

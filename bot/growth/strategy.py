@@ -21,11 +21,31 @@ from growth.indicators import compute_rsi, compute_ema, pct_change
 # Alts liquidas y volatiles disponibles en Coinbase. Se cruza con los productos
 # realmente operables al momento de escanear.
 CURATED = [
-    "SOL-USD", "SUI-USD", "INJ-USD", "RENDER-USD", "WLD-USD", "ONDO-USD",
-    "LINK-USD", "AVAX-USD", "NEAR-USD", "SEI-USD", "TIA-USD", "JTO-USD",
-    "APT-USD", "ARB-USD", "OP-USD", "FET-USD", "AAVE-USD",
-    "DOGE-USD", "JASMY-USD", "FIL-USD", "ADA-USD", "DOT-USD", "ATOM-USD",
+    # Blue-chip alts & L1s
+    "SOL-USD", "AVAX-USD", "LINK-USD", "ADA-USD", "DOT-USD", "ATOM-USD",
+    "NEAR-USD", "APT-USD", "SUI-USD", "SEI-USD",
+    # L2s & rollups
+    "ARB-USD", "OP-USD", "STRK-USD", "IMX-USD", "POL-USD",
+    # DeFi
+    "AAVE-USD", "UNI-USD", "LDO-USD", "MKR-USD", "PENDLE-USD", "ENA-USD",
+    # AI & infra
+    "FET-USD", "RENDER-USD", "WLD-USD", "GRT-USD",
+    # Memecoins líquidas
+    "DOGE-USD", "PEPE-USD", "WIF-USD", "BONK-USD",
+    # Ecosistemas & misc
+    "INJ-USD", "ONDO-USD", "TIA-USD", "JTO-USD", "TON-USD",
+    "RUNE-USD", "STX-USD", "JASMY-USD", "FIL-USD",
+    # Nuevas oportunidades
+    "ENA-USD", "EIGEN-USD", "ZRO-USD",
 ]
+# Deduplicar preservando orden
+_seen: set = set()
+_deduped: list = []
+for _c in CURATED:
+    if _c not in _seen:
+        _seen.add(_c)
+        _deduped.append(_c)
+CURATED = _deduped
 
 
 # ─── TRAMOS DE RIESGO ─────────────────────────────────────────────────────────

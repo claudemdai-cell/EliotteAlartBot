@@ -44,7 +44,8 @@ _DEFAULT = {
     "balance": 100.0,
     "start_balance": 100.0,
     "started_at": None,
-    "open_position": None,
+    "open_positions": {},          # { "JTO-USD": {...pos...}, "ARB-USD": {...} }
+    "open_position": None,         # legado — se migra a open_positions al cargar
     "pending_signal": None,
     "trade_log": [],
     "loss_streak": 0,
@@ -56,9 +57,8 @@ _DEFAULT = {
     "last_daily_summary": None,
     "last_weekly_summary": None,
     "awaiting_entry_confirm": False,
-    "awaiting_fill_price": False,      # esperando que el usuario escriba su precio de llenado
-    "pending_fill_price": None,        # precio pre-ingresado (si ya lo dio inline: "hecho 0.75")
-    # Legado — ya no se usa pero se mantiene para no romper estados guardados
+    "awaiting_fill_price": False,
+    "pending_fill_price": None,
     "awaiting_order_photo": False,
     "pending_entry_override": None,
 }
@@ -95,6 +95,13 @@ def load() -> dict:
                 data = json.load(f)
             merged = dict(_DEFAULT)
             merged.update(data)
+            # Migrar open_position (legacy) → open_positions
+            if merged.get("open_position") and not merged.get("open_positions"):
+                pos = merged["open_position"]
+                product = pos.get("product")
+                if product:
+                    merged["open_positions"] = {product: pos}
+                merged["open_position"] = None
             return merged
         except Exception as e:
             print(f"[STATE] Error leyendo estado: {e}")
@@ -180,99 +187,105 @@ COINBASE_FEE = 0.006
 
 
 def open_position_from_pending(entry_override: float | None = None) -> dict | None:
-    """
-    Convierte la senal pendiente en posicion abierta (cuando el user dice 'hecho').
-    entry_override: precio real al que entro el usuario (si lo da); el stop/target
-    se mantienen porque son niveles de estructura del mercado.
-    """
+    """Convierte la señal pendiente en posición abierta."""
     s = load()
     sig = s.get("pending_signal")
     if not sig:
         return None
     size_gross = round(s["balance"] * sig.get("size_pct", 1.0), 2)
     fee_entry  = round(size_gross * COINBASE_FEE, 2)
-    # size_usd = capital real expuesto al mercado (tras pagar fee de entrada)
     size_usd   = round(size_gross - fee_entry, 2)
-    entry = float(entry_override) if entry_override else sig["price"]
-    s["open_position"] = {
-        "product":   sig["product"],
-        "name":      sig["name"],
-        "entry":     entry,
-        "stop":      sig["stop"],
-        "target":    sig["target"],
-        "size_gross": size_gross,  # lo que sacaste del balance
-        "fee_entry": fee_entry,    # comisión pagada en la entrada (0.6% de size_gross)
-        "size_usd":  size_usd,     # expuesto al mercado (tras fee de entrada)
-        "opened_at": _now_iso(),
-        "kind":     sig.get("kind", "breakout"),
-        "score":    sig.get("score", 0),
-        "trail_level": 0,         # 0=stop original, 1=breakeven, 2=asegurando ganancia
-        "last_progress_pnl": 0.0, # ultimo % notificado en avisos de progreso
-        "last_progress_ts": None,
+    entry      = float(entry_override) if entry_override else sig["price"]
+    product    = sig["product"]
+    pos = {
+        "product": product, "name": sig["name"], "entry": entry,
+        "stop": sig["stop"], "target": sig["target"],
+        "size_gross": size_gross, "fee_entry": fee_entry, "size_usd": size_usd,
+        "opened_at": _now_iso(), "kind": sig.get("kind", "breakout"),
+        "score": sig.get("score", 0), "trail_level": 0,
+        "last_progress_pnl": 0.0, "last_progress_ts": None,
     }
-    # Limpiar flags de captura pendiente
+    if "open_positions" not in s:
+        s["open_positions"] = {}
+    s["open_positions"][product] = pos
+    s["open_position"] = None
+    s["awaiting_fill_price"] = False
+    s["pending_fill_price"]  = None
     s["awaiting_order_photo"] = False
     s["pending_entry_override"] = None
     s["pending_signal"] = None
-    # registrar conteo de senales del dia
     today = datetime.date.today().isoformat()
     if s.get("last_signal_day") != today:
         s["last_signal_day"] = today
         s["signals_today"] = 0
     s["signals_today"] = s.get("signals_today", 0) + 1
     save(s, important=True)
-    return s["open_position"]
+    return pos
 
 
-def close_position(exit_price: float, result: str) -> dict:
+def register_external_position(product: str, entry: float, stop: float,
+                                target: float, size_usd: float,
+                                opened_at: str | None = None) -> dict:
+    """Registra una posición abierta manualmente (fuera del flujo de señal)."""
+    s = load()
+    fee_entry = round(size_usd * COINBASE_FEE, 2)
+    pos = {
+        "product": product, "name": product.replace("-USD", ""),
+        "entry": entry, "stop": stop, "target": target,
+        "size_gross": size_usd, "fee_entry": fee_entry,
+        "size_usd": round(size_usd - fee_entry, 2),
+        "opened_at": opened_at or _now_iso(),
+        "kind": "manual", "score": 0, "trail_level": 0,
+        "last_progress_pnl": 0.0, "last_progress_ts": None,
+    }
+    if "open_positions" not in s:
+        s["open_positions"] = {}
+    s["open_positions"][product] = pos
+    s["open_position"] = None
+    save(s, important=True)
+    return pos
+
+
+def close_position(product: str, exit_price: float, result: str) -> dict:
     """
-    Cierra la posicion abierta, actualiza balance y trade_log.
-    result: 'target' | 'stop' | 'manual'
-    Retorna { pnl_pct, pnl_usd, new_balance, name }.
+    Cierra una posición por producto. result: 'target'|'stop'|'manual'.
+    Retorna dict con pnl_pct, pnl_usd, new_balance, name y desglose de fees.
     """
     s = load()
-    pos = s.get("open_position")
+    positions = s.get("open_positions", {})
+    pos = positions.get(product)
     if not pos:
-        return {}
-    entry    = pos["entry"]
-    pnl_pct  = (exit_price - entry) / entry * 100 if entry else 0
-    size_usd = pos["size_usd"]          # capital expuesto (ya descontó fee entrada)
-    size_gross = pos.get("size_gross", size_usd)  # backwards compat
+        # compat: legacy open_position
+        pos = s.get("open_position")
+        if pos and pos.get("product") == product:
+            s["open_position"] = None
+        else:
+            return {}
 
-    # Comisión de entrada (guardada en la posición; retrocompat: recalcular)
-    fee_entry_usd = round(pos.get("fee_entry", size_gross * COINBASE_FEE), 4)
+    entry      = pos["entry"]
+    pnl_pct    = (exit_price - entry) / entry * 100 if entry else 0
+    size_usd   = pos["size_usd"]
+    size_gross = pos.get("size_gross", size_usd)
+    fee_entry_usd  = round(pos.get("fee_entry", size_gross * COINBASE_FEE), 4)
+    gross_pnl_usd  = round(size_usd * pnl_pct / 100, 4)
+    exit_gross     = size_usd * (1 + pnl_pct / 100)
+    fee_exit_usd   = round(exit_gross * COINBASE_FEE, 4)
+    fee_total_usd  = round(fee_entry_usd + fee_exit_usd, 4)
+    pnl_usd        = round(exit_gross - fee_exit_usd - size_gross, 2)
+    new_balance    = round(s["balance"] + pnl_usd, 2)
+    real_pnl_pct   = pnl_usd / size_gross * 100 if size_gross else 0
 
-    # P&L bruto: movimiento de precio sobre el capital expuesto
-    gross_pnl_usd = round(size_usd * pnl_pct / 100, 4)
-
-    # Fee de salida sobre el valor total que recibimos del mercado
-    exit_gross = size_usd * (1 + pnl_pct / 100)
-    fee_exit_usd = round(exit_gross * COINBASE_FEE, 4)
-    exit_net   = exit_gross - fee_exit_usd
-
-    # P&L neto = lo que realmente queda vs lo que salió del balance
-    fee_total_usd = round(fee_entry_usd + fee_exit_usd, 4)
-    pnl_usd       = round(exit_net - size_gross, 2)
-    new_balance   = round(s["balance"] + pnl_usd, 2)
-
-    # pnl_pct real = pnl_usd / size_gross * 100 (incluye fees de entrada y salida)
-    real_pnl_pct = pnl_usd / size_gross * 100 if size_gross else 0
     s["trade_log"].append({
-        "product":   pos["product"],
-        "name":      pos["name"],
-        "entry":     entry,
-        "exit":      exit_price,
-        "pnl_pct":   round(real_pnl_pct, 2),
-        "pnl_usd":   round(pnl_usd, 2),
-        "result":    result,
-        "kind":      pos.get("kind", "?"),
-        "score":     pos.get("score", 0),
-        "closed_at": _now_iso(),
+        "product": pos["product"], "name": pos["name"],
+        "entry": entry, "exit": exit_price,
+        "pnl_pct": round(real_pnl_pct, 2), "pnl_usd": round(pnl_usd, 2),
+        "result": result, "kind": pos.get("kind", "?"),
+        "score": pos.get("score", 0), "closed_at": _now_iso(),
     })
     s["balance"] = new_balance
-    s["open_position"] = None
+    positions.pop(product, None)
+    s["open_positions"] = positions
 
-    # racha de perdidas / enfriamiento
     if pnl_pct < 0:
         s["loss_streak"] = s.get("loss_streak", 0) + 1
         if s["loss_streak"] >= 2:
@@ -283,17 +296,13 @@ def close_position(exit_price: float, result: str) -> dict:
 
     save(s, important=True)
     return {
-        "pnl_pct":      round(real_pnl_pct, 2),
-        "pnl_usd":      round(pnl_usd, 2),
-        "new_balance":  new_balance,
-        "name":         pos["name"],
-        "result":       result,
-        # Desglose de comisiones (Feature 1)
-        "gross_pnl_usd":  round(gross_pnl_usd, 2),
-        "fee_entry_usd":  round(fee_entry_usd, 2),
-        "fee_exit_usd":   round(fee_exit_usd, 2),
-        "fee_total_usd":  round(fee_total_usd, 2),
-        "size_gross":     size_gross,
+        "pnl_pct": round(real_pnl_pct, 2), "pnl_usd": round(pnl_usd, 2),
+        "new_balance": new_balance, "name": pos["name"], "result": result,
+        "gross_pnl_usd": round(gross_pnl_usd, 2),
+        "fee_entry_usd": round(fee_entry_usd, 2),
+        "fee_exit_usd":  round(fee_exit_usd, 2),
+        "fee_total_usd": round(fee_total_usd, 2),
+        "size_gross": size_gross,
     }
 
 

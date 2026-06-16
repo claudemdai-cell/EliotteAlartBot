@@ -50,8 +50,8 @@ def look_for_setup(available: set[str]) -> None:
 
     if s.get("paused"):
         return
-    if s.get("open_position"):
-        return  # ya hay algo en juego
+    if s.get("open_positions"):
+        return  # ya hay posiciones abiertas
 
     # Senal pendiente: si tiene >4h, expirarla y avisar; si no, esperar
     if s.get("pending_signal"):
@@ -94,74 +94,65 @@ def look_for_setup(available: set[str]) -> None:
     print(f"[GROWTH] Señal enviada: {best.name} score={best.score} rr={best.rr}")
 
 
-# ─── MONITOR DE POSICION ──────────────────────────────────────────────────────
-def monitor_position() -> None:
-    s = state.load()
-    pos = s.get("open_position")
-    if not pos:
-        return
-
-    price = get_price(pos["product"])
+# ─── MONITOR DE POSICIONES ────────────────────────────────────────────────────
+def _monitor_one(pos: dict) -> None:
+    """Monitorea una posición individual: target, stop, trailing, progreso."""
+    from growth.coinbase_data import snap_price
+    product = pos["product"]
+    price   = get_price(product)
     if price is None:
         return
 
+    s       = state.load()
     old_bal = s["balance"]
-
-    price_txt = messages._raw_num(price, pos["product"])
-    sell_btn = [
-        [("💰 Vendí", "vendi")],
+    logo    = messages.logo_url(product)
+    price_txt = messages._raw_num(price, product)
+    sell_btn  = [
+        [("💰 Vendí " + pos["name"], f"vendi:{product}")],
         [(f"📋 Precio {price_txt}", {"copy": price_txt})],
     ]
-    logo = messages.logo_url(pos["product"])
 
-    # Target alcanzado
     if price >= pos["target"]:
-        res = state.close_position(price, "target")
-        msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"],
-                                   close_result=res)
+        res = state.close_position(product, price, "target")
+        msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"], close_result=res)
         send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] TARGET {pos['name']} +{res['pnl_pct']}%")
         return
 
-    # Stop tocado
     if price <= pos["stop"]:
-        res = state.close_position(price, "stop")
-        msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"],
-                                 close_result=res)
+        res = state.close_position(product, price, "stop")
+        msg = messages.sell_stop(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"], close_result=res)
         send_growth_photo(logo, msg, buttons=sell_btn)
         print(f"[GROWTH] STOP {pos['name']} {res['pnl_pct']}%")
         return
 
-    # ── Trailing stop: proteger ganancias sin cortar el recorrido ──
-    entry = pos["entry"]
-    pnl = (price - entry) / entry * 100 if entry else 0
+    entry      = pos["entry"]
+    pnl        = (price - entry) / entry * 100 if entry else 0
     target_pct = (pos["target"] - entry) / entry * 100 if entry else 0
-    level = pos.get("trail_level", 0)
+    level      = pos.get("trail_level", 0)
+    new_stop   = None
+    new_level  = level
 
-    from growth.coinbase_data import snap_price
-    new_stop = None
-    new_level = level
     if level == 0 and pnl >= 10:
-        new_stop, new_level = snap_price(entry, pos["product"]), 1            # breakeven
+        new_stop, new_level = snap_price(entry, product), 1
     elif level == 1 and target_pct > 0 and pnl >= target_pct * 0.6:
-        new_stop, new_level = snap_price(entry * 1.05, pos["product"]), 2     # asegurar +5%
+        new_stop, new_level = snap_price(entry * 1.05, product), 2
 
     if new_stop is not None and new_stop > pos["stop"]:
-        pos["stop"] = new_stop
-        pos["trail_level"] = new_level
-        s["open_position"] = pos
-        state.save(s, important=True)
-        msg = messages.trailing_update(pos["name"], new_level, new_stop, pnl)
-        stop_txt = messages._raw_num(new_stop, pos["product"])
-        copy_btn = [[(f"📋 Stop {stop_txt}", {"copy": stop_txt})]]
-        send_growth_telegram(msg, buttons=copy_btn)
+        s2 = state.load()
+        if product in s2.get("open_positions", {}):
+            s2["open_positions"][product]["stop"]        = new_stop
+            s2["open_positions"][product]["trail_level"] = new_level
+            state.save(s2, important=True)
+        msg      = messages.trailing_update(pos["name"], new_level, new_stop, pnl)
+        stop_txt = messages._raw_num(new_stop, product)
+        send_growth_telegram(msg, buttons=[[(f"📋 Stop {stop_txt}", {"copy": stop_txt})]])
         print(f"[GROWTH] TRAILING {pos['name']} nivel {new_level} stop {new_stop}")
         return
 
-    # ── Aviso de progreso (max 1 cada 2h, al cruzar +5% o -3% desde el ultimo) ──
-    last_pnl = pos.get("last_progress_pnl", 0.0)
-    last_ts  = pos.get("last_progress_ts")
-    delta = pnl - last_pnl
+    last_pnl   = pos.get("last_progress_pnl", 0.0)
+    last_ts    = pos.get("last_progress_ts")
+    delta      = pnl - last_pnl
     cooldown_ok = True
     if last_ts:
         try:
@@ -170,11 +161,25 @@ def monitor_position() -> None:
         except Exception:
             pass
     if cooldown_ok and (delta >= 5 or delta <= -3):
-        pos["last_progress_pnl"] = pnl
-        pos["last_progress_ts"] = datetime.datetime.utcnow().isoformat()
-        s["open_position"] = pos
-        state.save(s)
+        s2 = state.load()
+        if product in s2.get("open_positions", {}):
+            s2["open_positions"][product]["last_progress_pnl"] = pnl
+            s2["open_positions"][product]["last_progress_ts"]  = datetime.datetime.utcnow().isoformat()
+            state.save(s2)
         send_growth_telegram(messages.position_progress(pos["name"], pnl, price, pos["target"]))
+
+
+def monitor_position() -> None:
+    """Monitorea todas las posiciones abiertas."""
+    s = state.load()
+    positions = s.get("open_positions", {})
+    if not positions:
+        return
+    for product, pos in list(positions.items()):
+        try:
+            _monitor_one(pos)
+        except Exception as e:
+            print(f"[GROWTH] Error monitoreando {product}: {e}")
 
 
 # ─── RESUMENES ────────────────────────────────────────────────────────────────
