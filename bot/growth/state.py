@@ -56,9 +56,11 @@ _DEFAULT = {
     "last_daily_summary": None,
     "last_weekly_summary": None,
     "awaiting_entry_confirm": False,
-    # Feature: pedir captura de orden tras confirmar entrada
+    "awaiting_fill_price": False,      # esperando que el usuario escriba su precio de llenado
+    "pending_fill_price": None,        # precio pre-ingresado (si ya lo dio inline: "hecho 0.75")
+    # Legado — ya no se usa pero se mantiene para no romper estados guardados
     "awaiting_order_photo": False,
-    "pending_entry_override": None,  # precio guardado mientras esperamos la foto
+    "pending_entry_override": None,
 }
 
 

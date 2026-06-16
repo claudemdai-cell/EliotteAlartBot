@@ -455,6 +455,50 @@ def welcome() -> str:
     )
 
 
+def ask_fill_price(sig: dict, prefill: float | None = None) -> str:
+    """Pregunta al usuario a qué precio lo llenó Coinbase."""
+    name    = sig.get("name", sig.get("product", "?").replace("-USD", ""))
+    product = sig.get("product")
+    signal_price = sig.get("price", 0)
+    example = _raw_num(signal_price, product)
+    if prefill:
+        return (
+            f"📝 *¿A qué precio te llenó Coinbase?* · {SELLO}\n\n"
+            f"Tengo `{_raw_num(prefill, product)}` de tu mensaje.\n"
+            f"Si ese fue el precio exacto escribe *sí*,\n"
+            f"o escribe el número correcto si fue diferente.\n\n"
+            f"_(precio de la señal: {fmt_price(signal_price)})_"
+        )
+    return (
+        f"📝 *¿A qué precio te llenó {name}?* · {SELLO}\n\n"
+        f"Escribe el número exacto que aparece en tu orden de Coinbase.\n"
+        f"Ejemplo: `{example}`\n\n"
+        f"_(precio de la señal: {fmt_price(signal_price)})_"
+    )
+
+
+def fill_price_confirmed(pos: dict, breakeven: float, price_now: float | None = None) -> str:
+    """Confirmación de entrada registrada con breakeven."""
+    name       = pos["name"]
+    entry      = pos["entry"]
+    fee_entry  = pos.get("fee_entry", 0)
+    size_gross = pos.get("size_gross", 0)
+    pnl_txt    = ""
+    if price_now:
+        pnl = (price_now - entry) / entry * 100
+        pnl_txt = f"\nAhora: {fmt_price(price_now)} ({pnl:+.1f}%)"
+    return (
+        f"✅ *¡Registrado! {name}* · {SELLO}\n\n"
+        f"Entrada:    {fmt_price(entry)}"
+        + pnl_txt + "\n"
+        f"Target:     {fmt_price(pos['target'])}\n"
+        f"Stop:       {fmt_price(pos['stop'])}\n\n"
+        f"Fee entrada: ~{fmt_usd(fee_entry)} (0.6%)\n"
+        f"*Breakeven: {fmt_price(breakeven)}* — hasta ahí solo cubres fees\n\n"
+        f"Lo vigilo 24/7 y te aviso cuando salir. 🦅"
+    )
+
+
 def update_message(s: dict, current_price: float | None = None) -> str:
     """
     Mensaje completo de progreso del reto: balance, posición, señal y scanner.
