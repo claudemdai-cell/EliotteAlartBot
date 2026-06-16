@@ -206,10 +206,16 @@ def maybe_send_summaries() -> None:
     local = _local_now()
     today = local.date().isoformat()
 
+    positions = s.get("open_positions") or {}
+    prices    = {p: get_price(p) for p in positions} if positions else {}
+
     # Diario a las 7AM
     if local.hour >= DAILY_SUMMARY_HOUR and s.get("last_daily_summary") != today:
-        has_signal = bool(s.get("pending_signal") or s.get("open_position"))
-        msg = messages.daily_summary(s["balance"], s["start_balance"], CURATED, has_signal)
+        has_signal = bool(s.get("pending_signal") or positions)
+        msg = messages.daily_summary(
+            s["balance"], s["start_balance"], CURATED, has_signal,
+            positions=positions, prices=prices,
+        )
         send_growth_telegram(msg)
         s["last_daily_summary"] = today
         state.save(s)
@@ -220,6 +226,7 @@ def maybe_send_summaries() -> None:
         msg = messages.weekly_summary(
             s["balance"], s["start_balance"], s.get("trade_log", []),
             _days_left(s), tier.name,
+            positions=positions, prices=prices,
         )
         send_growth_telegram(msg)
         s["last_weekly_summary"] = today
@@ -232,12 +239,17 @@ def run_growth_scanner() -> None:
 
     # Cargar estado (dispara la recuperacion desde GitHub si hubo reinicio)
     s = state.load()
+    _positions = s.get("open_positions") or {}
+    _prices    = {p: get_price(p) for p in _positions} if _positions else {}
     if state.RECOVERY["recovered"]:
-        send_growth_telegram(messages.state_recovered(s["balance"], len(s.get("trade_log", []))))
+        send_growth_telegram(messages.state_recovered(
+            s["balance"], len(s.get("trade_log", [])),
+            positions=_positions, prices=_prices,
+        ))
     elif state.RECOVERY["failed"]:
         send_growth_telegram(messages.state_lost())
     else:
-        send_growth_telegram(messages.welcome())
+        send_growth_telegram(messages.welcome(positions=_positions, prices=_prices))
 
     # productos disponibles en Coinbase (cache, refrescado cada hora)
     available = set(list_usd_products()) or set(CURATED)

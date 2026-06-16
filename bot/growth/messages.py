@@ -243,33 +243,69 @@ def sell_stop(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_
     )
 
 
-def daily_summary(balance: float, start: float, watching: list[str], has_signal: bool) -> str:
+def _positions_inline(positions: dict, prices: dict | None) -> str:
+    """Bloque compacto de posiciones abiertas para insertar en cualquier mensaje."""
+    if not positions:
+        return ""
+    prices = prices or {}
+    lines = ["📍 *Invertido ahora:*"]
+    for product, pos in positions.items():
+        price  = prices.get(product)
+        partial = " _(50% restante)_" if pos.get("partial_tp_done") else ""
+        if price:
+            pnl   = _pct(pos["entry"], price)
+            emoji = "📈" if pnl >= 0 else "📉"
+            lines.append(
+                f"  {emoji} *{pos['name']}*{partial}: {fmt_price(pos['entry'])} → "
+                f"{fmt_price(price)} ({pnl:+.1f}%) · target {fmt_price(pos['target'])}"
+            )
+        else:
+            lines.append(
+                f"  📍 *{pos['name']}*{partial}: entrada {fmt_price(pos['entry'])} "
+                f"· target {fmt_price(pos['target'])}"
+            )
+    return "\n".join(lines)
+
+
+def daily_summary(balance: float, start: float, watching: list[str], has_signal: bool,
+                  positions: dict | None = None, prices: dict | None = None) -> str:
     growth = _pct(start, balance)
-    watch = ", ".join(w.replace("-USD", "") for w in watching[:6])
+    watch  = ", ".join(w.replace("-USD", "") for w in watching[:6])
     if has_signal:
         estado = "Hay una señal activa, revísala arriba."
     else:
         estado = "Hoy sin señal clara, mercado sin breakout limpio."
+
+    pos_block = _positions_inline(positions or {}, prices)
+    pos_section = f"\n\n{pos_block}" if pos_block else ""
+
     return (
-        f"🌙 *{SELLO} · Resumen*\n\n"
+        f"🌙 *{SELLO} · Resumen del día*\n\n"
         f"Balance: *{fmt_usd(balance)}* ({growth:+.0f}% desde el inicio)\n"
-        f"{estado}\n\n"
+        f"{estado}"
+        f"{pos_section}\n\n"
         f"Vigilando: {watch}\n"
         f"Te aviso apenas algo rompa con fuerza."
     )
 
 
-def weekly_summary(balance: float, start: float, trade_log: list, days_left: int, tier_name: str) -> str:
+def weekly_summary(balance: float, start: float, trade_log: list, days_left: int, tier_name: str,
+                   positions: dict | None = None, prices: dict | None = None) -> str:
     growth = _pct(start, balance)
-    wins = sum(1 for t in trade_log if t.get("pnl_pct", 0) > 0)
+    wins   = sum(1 for t in trade_log if t.get("pnl_pct", 0) > 0)
     losses = sum(1 for t in trade_log if t.get("pnl_pct", 0) <= 0)
+
+    pos_block   = _positions_inline(positions or {}, prices)
+    pos_section = f"\n\n{pos_block}" if pos_block else ""
+
     return (
-        f"📊 *{SELLO} · Cómo vamos*\n\n"
+        f"📊 *{SELLO} · Cómo vamos esta semana*\n\n"
         f"Empezaste: {fmt_usd(start)}\n"
         f"Ahora: *{fmt_usd(balance)}* ({growth:+.0f}%)\n"
         f"Trades: {wins} ganados, {losses} perdidos\n"
         f"Faltan: {days_left} días para la meta\n"
-        f"Modo de riesgo actual: {tier_name}\n\n"
+        f"Modo de riesgo actual: {tier_name}"
+        f"{pos_section}\n\n"
         f"{_weekly_note(growth, days_left)}"
     )
 
@@ -542,11 +578,15 @@ def position_progress(name: str, pnl_pct: float, price: float, target: float) ->
     )
 
 
-def state_recovered(balance: float, trades: int) -> str:
+def state_recovered(balance: float, trades: int,
+                    positions: dict | None = None, prices: dict | None = None) -> str:
+    pos_block   = _positions_inline(positions or {}, prices)
+    pos_section = f"\n\n{pos_block}" if pos_block else ""
     return (
         f"♻️ *Me reinicié y recuperé todo* · {SELLO}\n\n"
         f"Balance: *{fmt_usd(balance)}* | Trades registrados: {trades}\n"
         f"Backup de GitHub funcionando. Seguimos. 💪"
+        f"{pos_section}"
     )
 
 
@@ -554,20 +594,33 @@ def state_lost() -> str:
     return (
         f"⚠️ *Me reinicié y no pude recuperar el estado* · {SELLO}\n\n"
         f"Confirma tu balance actual con */balance <monto>*\n"
-        f"y si tienes una posición abierta, avísame."
+        f"y si tienes posiciones abiertas, regístralas con */abrir*."
     )
 
 
-def welcome() -> str:
-    return (
-        f"🚀 *{SELLO} — Activado*\n\n"
-        "Voy a cazar setups de momentum en Coinbase 24/7.\n"
-        "Cuando algo rompa con fuerza, te aviso con la jugada\n"
-        "completa: cuánto poner, target, stop y el porqué.\n\n"
-        "Para empezar, dime tu capital con */balance 100*\n"
-        "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
-        "_Meta: llevar $100 a $1,000. Sin apuro, con cabeza._"
-    )
+def welcome(positions: dict | None = None, prices: dict | None = None) -> str:
+    pos_block   = _positions_inline(positions or {}, prices)
+    pos_section = f"\n\n{pos_block}" if pos_block else ""
+
+    if positions:
+        intro = (
+            f"🚀 *{SELLO} — Estoy activo*\n\n"
+            f"Volví a estar en línea. Vigilo tus posiciones 24/7\n"
+            f"y sigo buscando el próximo setup."
+            f"{pos_section}\n\n"
+            f"Escribe /ayuda para ver todo lo que puedo hacer."
+        )
+    else:
+        intro = (
+            f"🚀 *{SELLO} — Activado*\n\n"
+            "Voy a cazar setups de momentum en Coinbase 24/7.\n"
+            "Cuando algo rompa con fuerza, te aviso con la jugada\n"
+            "completa: cuánto poner, target, stop y el porqué.\n\n"
+            "Para empezar, dime tu capital con */balance 100*\n"
+            "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
+            "_Meta: llevar $100 a $1,000. Sin apuro, con cabeza._"
+        )
+    return intro
 
 
 def ask_fill_price(sig: dict, prefill: float | None = None) -> str:
