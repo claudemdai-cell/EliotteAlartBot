@@ -118,6 +118,77 @@ def fmt_pnl_breakdown(close_result: dict) -> str:
     )
 
 
+def positions_summary(s: dict, prices: dict) -> str:
+    """
+    Resumen rápido de todas las posiciones abiertas con P&L en vivo.
+    prices: {product: float}
+    """
+    positions = s.get("open_positions") or {}
+    if not positions:
+        sig = s.get("pending_signal")
+        if sig:
+            return (
+                f"📍 *{SELLO} — Sin posición abierta*\n\n"
+                f"Hay una señal pendiente de *{sig.get('name','?')}*.\n"
+                f"Toca ✅ Entré si compraste."
+            )
+        return (
+            f"📍 *{SELLO} — Sin posición abierta*\n\n"
+            f"Escaneando el mercado cada 30 min. 🦅\n"
+            f"Balance disponible: *{fmt_usd(s['balance'])}*"
+        )
+
+    lines = [f"📍 *{SELLO} — Posiciones abiertas*\n"]
+    total_invested = 0.0
+    total_pnl = 0.0
+
+    for product, pos in positions.items():
+        price   = prices.get(product)
+        entry   = pos["entry"]
+        size_g  = pos.get("size_gross", pos.get("size_usd", 0))
+        size_u  = pos.get("size_usd", size_g)
+        fee_e   = pos.get("fee_entry", round(size_g * 0.006, 2))
+        partial = pos.get("partial_tp_done", False)
+        total_invested += size_g
+
+        lines.append(f"*{pos['name']}/USD*" + (" _(50% restante)_" if partial else ""))
+
+        if price:
+            gross_pct  = _pct(entry, price)
+            exit_gross = size_u * (1 + gross_pct / 100)
+            fee_exit   = round(exit_gross * 0.006, 2)
+            net_pnl    = round(exit_gross - fee_exit - size_g, 2)
+            net_pct    = net_pnl / size_g * 100 if size_g else 0
+            dist_tgt   = (pos["target"] - price) / price * 100 if price else 0
+            dist_stp   = (price - pos["stop"]) / price * 100 if price else 0
+            pnl_emoji  = "📈" if net_pnl >= 0 else "📉"
+            sign       = "+" if net_pnl >= 0 else ""
+            total_pnl += net_pnl
+
+            lines.append(
+                f"  {pnl_emoji} {fmt_price(entry)} → {fmt_price(price)}  "
+                f"*{sign}{fmt_usd(net_pnl)}* ({net_pct:+.1f}%)"
+            )
+            lines.append(
+                f"  🎯 Target {fmt_price(pos['target'])} (+{dist_tgt:.1f}%)"
+                f"  🛑 Stop {fmt_price(pos['stop'])} (-{dist_stp:.1f}%)"
+            )
+        else:
+            lines.append(f"  Entrada: {fmt_price(entry)} | Sin precio ahora")
+            lines.append(
+                f"  🎯 {fmt_price(pos['target'])}  🛑 {fmt_price(pos['stop'])}"
+            )
+        lines.append("")   # línea vacía entre posiciones
+
+    # Totales
+    sign_total = "+" if total_pnl >= 0 else ""
+    lines.append(f"Invertido total: *{fmt_usd(total_invested)}*")
+    if prices:
+        lines.append(f"P&L combinado: *{sign_total}{fmt_usd(total_pnl)}*")
+    lines.append(f"Balance: *{fmt_usd(s['balance'])}*")
+    return "\n".join(lines)
+
+
 def partial_tp(name: str, exit_price: float, pnl_usd: float, new_bal: float, breakeven: float) -> str:
     sign = "+" if pnl_usd >= 0 else ""
     return (
@@ -318,8 +389,9 @@ def _alive_line(s: dict) -> str:
 def help_text() -> str:
     return (
         f"🚀 *{SELLO} — Comandos*\n\n"
-        "/estado — balance, posición y si estoy vivo\n"
-        "/update — progreso detallado con P&L en tiempo real\n"
+        "/posiciones — resumen de lo invertido y P&L en vivo 📍\n"
+        "/update — progreso completo del reto con barra\n"
+        "/estado — balance general y si estoy vivo\n"
         "/abrir COIN entrada target stop monto — registrar posición ya abierta\n"
         "/precio COIN — precio spot inmediato (ej: /precio SOL)\n"
         "/historial — últimos trades cerrados\n"

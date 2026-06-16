@@ -188,7 +188,7 @@ def telegram_webhook():
 # ─── ENDPOINTS GROWTH (Reto 100->1000) ───────────────────────────────────────
 
 # Botones validos del bot growth (whitelist de callback_data)
-_GROWTH_CALLBACKS = {"entre", "paso", "vendi", "revisar", "update"}
+_GROWTH_CALLBACKS = {"entre", "paso", "vendi", "revisar", "update", "posiciones"}
 
 
 def _growth_callback_ok(cb_data: str) -> bool:

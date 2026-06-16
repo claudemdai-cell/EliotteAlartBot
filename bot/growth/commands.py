@@ -44,7 +44,17 @@ def handle_growth_command(text: str) -> str:
         s = state.load()
         prices = {p: get_price(p) for p in s.get("open_positions", {}) if get_price(p)}
         txt = messages.update_message(s, prices)
-        return (txt, [[("🔄 Actualizar", "update")]])
+        return (txt, [
+            [("📍 Posiciones", "posiciones"), ("🔄 Actualizar", "update")],
+        ])
+
+    # /posiciones — resumen rápido de inversiones abiertas y su P&L
+    if low in ("posiciones", "/posiciones", "cartera", "/cartera",
+               "inversiones", "/inversiones", "portfolio"):
+        s = state.load()
+        prices = {p: get_price(p) for p in s.get("open_positions", {}) if get_price(p)}
+        txt = messages.positions_summary(s, prices)
+        return (txt, [[("🔄 Actualizar", "posiciones")]])
 
     # ── Precio de llenado esperado ────────────────────────────────────────────
     _s = state.load()
