@@ -246,6 +246,62 @@ def register_external_position(product: str, entry: float, stop: float,
     return pos
 
 
+def partial_close_position(product: str, exit_price: float, fraction: float = 0.5) -> dict:
+    """
+    Cierra `fraction` de la posición (default 50%) y deja el resto vivo.
+    Actualiza el balance y marca partial_tp_done=True en la posición.
+    Retorna dict con pnl_usd, new_balance, name.
+    """
+    s = load()
+    positions = s.get("open_positions", {})
+    pos = positions.get(product)
+    if not pos:
+        return {}
+
+    entry      = pos["entry"]
+    size_usd   = pos["size_usd"]
+    size_gross = pos.get("size_gross", size_usd)
+    fee_entry  = pos.get("fee_entry", round(size_gross * COINBASE_FEE, 4))
+
+    # Calcular P&L de la fracción que se cierra
+    gross_pct        = (exit_price - entry) / entry * 100 if entry else 0
+    partial_usd      = size_usd * fraction
+    partial_gross    = size_gross * fraction
+    partial_fee_entry = round(fee_entry * fraction, 4)
+    exit_gross       = partial_usd * (1 + gross_pct / 100)
+    fee_exit         = round(exit_gross * COINBASE_FEE, 4)
+    pnl_usd          = round(exit_gross - fee_exit - partial_gross, 2)
+    real_pnl_pct     = pnl_usd / partial_gross * 100 if partial_gross else 0
+
+    new_balance = round(s["balance"] + pnl_usd, 2)
+    s["balance"] = new_balance
+
+    # Actualizar posición con el resto (fracción que queda)
+    rem = 1.0 - fraction
+    positions[product]["size_usd"]       = round(size_usd * rem, 6)
+    positions[product]["size_gross"]     = round(size_gross * rem, 6)
+    positions[product]["fee_entry"]      = round(fee_entry * rem, 6)
+    positions[product]["partial_tp_done"] = True
+    s["open_positions"] = positions
+
+    # Log del cierre parcial
+    s["trade_log"].append({
+        "product": pos["product"], "name": pos["name"],
+        "entry": entry, "exit": exit_price,
+        "pnl_pct": round(real_pnl_pct, 2), "pnl_usd": round(pnl_usd, 2),
+        "result": "partial_tp", "kind": pos.get("kind", "?"),
+        "score": pos.get("score", 0), "closed_at": _now_iso(),
+        "fraction": fraction,
+    })
+
+    save(s, important=True)
+    return {
+        "pnl_usd": pnl_usd, "pnl_pct": round(real_pnl_pct, 2),
+        "new_balance": new_balance, "name": pos["name"],
+        "fee_exit_usd": round(fee_exit, 2), "fee_entry_usd": round(partial_fee_entry, 2),
+    }
+
+
 def close_position(product: str, exit_price: float, result: str) -> dict:
     """
     Cierra una posición por producto. result: 'target'|'stop'|'manual'.

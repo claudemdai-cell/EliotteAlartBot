@@ -113,10 +113,28 @@ def _monitor_one(pos: dict) -> None:
     ]
 
     if price >= pos["target"]:
-        res = state.close_position(product, price, "target")
-        msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"], close_result=res)
-        send_growth_photo(logo, msg, buttons=sell_btn)
-        print(f"[GROWTH] TARGET {pos['name']} +{res['pnl_pct']}%")
+        if not pos.get("partial_tp_done"):
+            # Primera vez en target: cerrar 50% y dejar correr el resto
+            res = state.partial_close_position(product, price, fraction=0.5)
+            # Mover stop a breakeven para el 50% restante
+            breakeven = round(pos["entry"] * (1 + 2 * state.COINBASE_FEE), 8)
+            s2 = state.load()
+            if product in s2.get("open_positions", {}):
+                from growth.coinbase_data import snap_price as _snap
+                s2["open_positions"][product]["stop"] = _snap(breakeven, product)
+                s2["open_positions"][product]["target"] = _snap(
+                    pos["target"] * 1.05, product
+                )   # target secundario: +5% sobre el primero
+                state.save(s2, important=True)
+            msg = messages.partial_tp(pos["name"], price, res["pnl_usd"], res["new_balance"], breakeven)
+            send_growth_photo(logo, msg, buttons=sell_btn)
+            print(f"[GROWTH] PARTIAL TP {pos['name']} +{res['pnl_pct']}% (50%)")
+        else:
+            # 50% restante llegó a target secundario: cerrar todo
+            res = state.close_position(product, price, "target")
+            msg = messages.sell_target(res["name"], price, res["pnl_pct"], old_bal, res["new_balance"], close_result=res)
+            send_growth_photo(logo, msg, buttons=sell_btn)
+            print(f"[GROWTH] TARGET FINAL {pos['name']} +{res['pnl_pct']}%")
         return
 
     if price <= pos["stop"]:

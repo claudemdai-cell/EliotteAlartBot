@@ -118,6 +118,21 @@ def fmt_pnl_breakdown(close_result: dict) -> str:
     )
 
 
+def partial_tp(name: str, exit_price: float, pnl_usd: float, new_bal: float, breakeven: float) -> str:
+    sign = "+" if pnl_usd >= 0 else ""
+    return (
+        f"🎯 *{name}: PRIMER TARGET — 50% vendido* · {SELLO}\n\n"
+        f"Llegamos. Vendí el *50%* en {fmt_price(exit_price)}.\n"
+        f"Ganancia parcial: *{sign}{fmt_usd(pnl_usd)}* 🎉\n"
+        f"Balance: *{fmt_usd(new_bal)}*\n\n"
+        f"El otro 50% sigue corriendo hacia un segundo target.\n"
+        f"Stop subido a breakeven: *{fmt_price(breakeven)}*\n\n"
+        f"*A partir de aquí no puedes perder en este trade.* 😤\n\n"
+        f"_Cierra el resto en Coinbase cuando quieras,\n"
+        f"o espera al segundo target. Te aviso si lo toca._"
+    )
+
+
 def sell_target(name: str, exit_price: float, pnl_pct: float, old_bal: float, new_bal: float,
                 close_result: dict | None = None) -> str:
     breakdown = fmt_pnl_breakdown(close_result) if close_result else f"Ganancia: *{pnl_pct:+.1f}%* 🎉"

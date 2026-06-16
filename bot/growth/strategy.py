@@ -14,7 +14,7 @@ El riesgo (stop y agresividad) se adapta al balance actual (tramos).
 
 from dataclasses import dataclass, field
 from growth.coinbase_data import get_candles, get_price, snap_price, G_1H, G_6H, G_1D
-from growth.indicators import compute_rsi, compute_ema, pct_change
+from growth.indicators import compute_rsi, compute_ema, pct_change, compute_atr, compute_macd
 
 
 # ─── UNIVERSO ─────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ class Signal:
     stop: float
     target: float
     rr: float
-    score: int              # confirmaciones cumplidas (0-5)
+    score: int              # confirmaciones cumplidas (0-6)
     rsi: float
     trend: str              # "alcista" / "lateral" / "bajista"
     resistance: float
@@ -213,6 +213,14 @@ def evaluate(product: str, balance: float) -> Signal | None:
     else:
         reasons.append(f"Precio {ext:.0f}% sobre su media — ya corrio bastante")
 
+    # 6. MACD DIARIO — momentum alcista confirmado (cruce positivo)
+    macd_val, macd_sig, macd_hist = compute_macd(d_close)
+    if macd_hist > 0 and macd_val > macd_sig:
+        score += 1
+        reasons.append("MACD positivo: momentum alcista confirmado")
+    elif macd_hist < 0:
+        reasons.append("MACD negativo — momentum debil (confirmacion pendiente)")
+
     # ── Filtro: tendencia no bajista y score suficiente para el tramo ──
     if trend == "bajista":
         return None
@@ -221,8 +229,17 @@ def evaluate(product: str, balance: float) -> Signal | None:
     if score < tier.min_score:
         return None
 
-    # ── Construir niveles (redondeados a la precision que acepta Coinbase) ──
-    stop   = snap_price(price * (1 - tier.stop_pct), product)
+    # ── Stop basado en ATR (volatilidad real) ──────────────────────────────────
+    # Usa 1.5× el ATR diario; con piso de 4% y techo de 1.5× el % fijo del tramo
+    atr = compute_atr(data["d_high"], data["d_low"], data["d_close"])
+    if atr > 0:
+        atr_dist = atr * 1.5
+        atr_dist = max(atr_dist, price * 0.04)
+        atr_dist = min(atr_dist, price * tier.stop_pct * 1.5)
+        stop = snap_price(price - atr_dist, product)
+    else:
+        stop = snap_price(price * (1 - tier.stop_pct), product)
+
     risk   = price - stop
     target = snap_price(price + risk * tier.target_rr, product)
     rr     = round((target - price) / risk, 1) if risk > 0 else 0
@@ -303,10 +320,16 @@ def evaluate_reversion(product: str, balance: float) -> Signal | None:
     if score < tier.min_score:
         return None
 
-    # Niveles: stop bajo el piso reciente, target hacia la EMA21 diaria
-    # (redondeados a la precision que acepta Coinbase)
+    # Niveles: stop bajo el piso reciente ajustado por ATR
     ema21_d = compute_ema(d_close, 21)
-    stop = snap_price(min(low30, price * (1 - tier.stop_pct)) * 0.995, product)
+    atr = compute_atr(data["d_high"], data["d_low"], data["d_close"])
+    if atr > 0:
+        # En reversion el stop va 1× ATR por debajo del piso reciente
+        raw_stop = min(low30 * 0.995, price - atr * 1.0)
+        raw_stop = max(raw_stop, price * (1 - tier.stop_pct * 1.5))
+        stop = snap_price(raw_stop, product)
+    else:
+        stop = snap_price(min(low30, price * (1 - tier.stop_pct)) * 0.995, product)
     risk = price - stop
     if risk <= 0:
         return None
