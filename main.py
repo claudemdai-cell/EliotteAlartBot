@@ -14,25 +14,36 @@ from alerts import send_telegram
 from log import log_alert
 
 # Activos a monitorear con sus niveles Elliott actuales
-# Actualizar wave_start/wave_end manualmente cuando cambie el conteo
+# ACTUALIZAR manualmente cuando cambie el conteo
+# Última actualización: 2026-06-26
+
 WATCHLIST = [
     {
         "asset": "BTCUSD",
         "symbol": "BTC_USDT",
-        "wave_start": 60171,   # inicio O1 diario
-        "wave_end":   76013,   # fin O1 diario
-        "stop":       60171,   # invalidación R3
-        "target":     95000,   # extensión 161.8%
-        "in_elliott_zone": True,
+        "wave_start": 60171,       # inicio O1d — PENDIENTE RECONTEO (R1 posible violación)
+        "wave_end":   76013,       # fin O1d / invalidación R3
+        "stop":       59000,       # bajo mínimo reciente
+        "target":     95000,       # extensión 161.8%
+        "in_elliott_zone": False,  # ⚠️ BLOQUEADO — reconteo diario urgente antes de operar
     },
     {
         "asset": "ETHUSD",
         "symbol": "ETH_USDT",
-        "wave_start": 1741,    # inicio O1d
-        "wave_end":   2460,    # fin O1d
-        "stop":       1740,    # invalidación
-        "target":     4000,    # target O3
-        "in_elliott_zone": True,
+        "wave_start": 1505,        # inicio O1d (reconteo jun 21 2026)
+        "wave_end":   1848,        # fin O1d
+        "stop":       1505,        # invalidación R1 diario
+        "target":     3170,        # T1: extensión 161.8% desde O2d
+        "in_elliott_zone": True,   # Zona entrada: $1,634–$1,676
+    },
+    {
+        "asset": "LINKUSD",
+        "symbol": "LINK_USDT",
+        "wave_start": 4.83,        # invalidación O2 semanal
+        "wave_end":   14.0,        # máximo O1 semanal (referencia)
+        "stop":       4.83,
+        "target":     9.35,        # proyección Mesa Redonda
+        "in_elliott_zone": False,  # Esperando señal de reversión semanal
     },
 ]
 
@@ -92,9 +103,9 @@ def compute_ema(closes: list, period: int = 21) -> float:
 
 def scan_asset(cfg: dict) -> None:
     symbol = cfg["symbol"]
-    candles = get_ohlcv(symbol, "4h", 25)
+    candles = get_ohlcv(symbol, "4h", 26)  # 26 = 25 + 1 para tener vela anterior
 
-    if len(candles) < 21:
+    if len(candles) < 22:
         print(f"[SCANNER] {symbol}: datos insuficientes")
         return
 
@@ -105,40 +116,55 @@ def scan_asset(cfg: dict) -> None:
     closes  = [float(c[4]) for c in candles]
     volumes = [float(c[5]) for c in candles]
 
-    last_open   = opens[-1]
-    last_close  = closes[-1]
-    last_high   = highs[-1]
-    last_low    = lows[-1]
+    # Vela actual (última) y anterior (penúltima)
+    last_open,  last_close  = opens[-1],  closes[-1]
+    last_high,  last_low    = highs[-1],  lows[-1]
+    prev_open,  prev_close  = opens[-2],  closes[-2]
+    prev_high,  prev_low    = highs[-2],  lows[-2]
 
-    rsi     = compute_rsi(closes)
-    ema21   = compute_ema(closes, 21)
-    vol_avg5  = sum(volumes[-5:]) / 5
-    vol_avg20 = sum(volumes[-20:]) / 20
+    # RSI: necesitamos el valor actual y el de la vela anterior
+    rsi_current  = compute_rsi(closes[:-1])   # RSI sin la vela actual (cierre previo)
+    rsi_prev     = compute_rsi(closes[:-2])   # RSI dos velas atrás
+    # RSI con la vela actual para mostrar en alerta
+    rsi_now      = compute_rsi(closes)
+
+    ema21 = compute_ema(closes, 21)
+
+    # Volumen: avg5 de las 5 velas ANTES de la actual (para spike comparison)
+    current_volume = volumes[-1]
+    vol_avg5       = sum(volumes[-6:-1]) / 5   # últimas 5 sin la actual
+    vol_avg20      = sum(volumes[-21:-1]) / 20  # últimas 20 sin la actual
 
     payload = WebhookPayload(
-        asset            = cfg["asset"],
-        price            = last_close,
-        open_4h          = last_open,
-        close_4h         = last_close,
-        high_4h          = last_high,
-        low_4h           = last_low,
-        rsi_4h           = rsi,
-        volume_avg5      = vol_avg5,
-        volume_avg20     = vol_avg20,
-        ema21_4h         = ema21,
-        in_elliott_zone  = cfg["in_elliott_zone"],
-        wave_start       = cfg["wave_start"],
-        wave_end         = cfg["wave_end"],
+        asset           = cfg["asset"],
+        price           = last_close,
+        open_4h         = last_open,
+        close_4h        = last_close,
+        high_4h         = last_high,
+        low_4h          = last_low,
+        rsi_4h          = rsi_current,
+        rsi_prev_4h     = rsi_prev,
+        volume_avg5     = vol_avg5,
+        volume_avg20    = vol_avg20,
+        current_volume  = current_volume,
+        ema21_4h        = ema21,
+        in_elliott_zone = cfg["in_elliott_zone"],
+        wave_start      = cfg["wave_start"],
+        wave_end        = cfg["wave_end"],
+        prev_open_4h    = prev_open,
+        prev_close_4h   = prev_close,
+        prev_high_4h    = prev_high,
+        prev_low_4h     = prev_low,
     )
 
     result = evaluate_layers(payload)
     score  = result["score"]
-    layers_passed = [k for k, v in result["layers"].items() if v.passed]
+    layers_passed = [k for k, v in result["layers"].items() if v.passed or v.partial]
 
-    print(f"[SCANNER] {cfg['asset']} | Score: {score}/5 | RSI: {rsi} | Price: {last_close}")
+    print(f"[SCANNER] {cfg['asset']} | Score: {score}/5 | RSI: {rsi_now:.1f} | Price: {last_close}")
 
     sent = False
-    if score >= 4:
+    if result["alert_ready"]:
         text = format_alert_text(payload, result, cfg["stop"], cfg["target"])
         sent = send_telegram(text)
 

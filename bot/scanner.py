@@ -214,8 +214,8 @@ def get_asset_status(cfg: dict) -> dict | None:
     symbol = cfg["symbol"]
     state  = DYNAMIC_STATE.get(asset, {})
 
-    candles = get_ohlcv(symbol, "4h", 25)
-    if len(candles) < 21:
+    candles = get_ohlcv(symbol, "4h", 26)
+    if len(candles) < 22:
         return None
 
     closes  = [float(c['c']) for c in candles]
@@ -224,10 +224,12 @@ def get_asset_status(cfg: dict) -> dict | None:
     lows    = [float(c['l']) for c in candles]
     opens   = [float(c['o']) for c in candles]
 
-    rsi       = compute_rsi(closes)
+    rsi       = compute_rsi(closes[:-1])
+    rsi_prev  = compute_rsi(closes[:-2])
     ema21     = compute_ema(closes, 21)
-    vol_avg5  = sum(volumes[-5:]) / 5
-    vol_avg20 = sum(volumes[-20:]) / 20
+    current_volume = volumes[-1]
+    vol_avg5  = sum(volumes[-6:-1]) / 5
+    vol_avg20 = sum(volumes[-21:-1]) / 20
 
     price      = closes[-1]
     wave_start = state.get("wave_start", min(lows))
@@ -246,9 +248,13 @@ def get_asset_status(cfg: dict) -> dict | None:
         asset=asset, price=price,
         open_4h=opens[-1], close_4h=price,
         high_4h=highs[-1], low_4h=lows[-1],
-        rsi_4h=rsi, volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        rsi_4h=rsi, rsi_prev_4h=rsi_prev,
+        volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        current_volume=current_volume,
         ema21_4h=ema21, in_elliott_zone=True,
         wave_start=wave_start, wave_end=wave_end,
+        prev_open_4h=opens[-2], prev_close_4h=closes[-2],
+        prev_high_4h=highs[-2], prev_low_4h=lows[-2],
     )
     result = evaluate_layers(payload)
     score  = result["score"]
@@ -275,8 +281,8 @@ def scan_asset(cfg: dict) -> None:
     symbol = cfg["symbol"]
     state  = DYNAMIC_STATE.get(asset, {})
 
-    candles = get_ohlcv(symbol, "4h", 25)
-    if len(candles) < 21:
+    candles = get_ohlcv(symbol, "4h", 26)
+    if len(candles) < 22:
         print(f"[SCANNER] {symbol}: datos insuficientes")
         return
 
@@ -286,10 +292,12 @@ def scan_asset(cfg: dict) -> None:
     closes  = [float(c['c']) for c in candles]
     volumes = [float(c['v']) for c in candles]
 
-    rsi       = compute_rsi(closes)
+    rsi       = compute_rsi(closes[:-1])
+    rsi_prev  = compute_rsi(closes[:-2])
     ema21     = compute_ema(closes, 21)
-    vol_avg5  = sum(volumes[-5:]) / 5
-    vol_avg20 = sum(volumes[-20:]) / 20
+    current_volume = volumes[-1]
+    vol_avg5  = sum(volumes[-6:-1]) / 5
+    vol_avg20 = sum(volumes[-21:-1]) / 20
 
     # Usar niveles dinamicos si existen, si no usar defaults del 90d
     wave_start = state.get("wave_start", min(lows))
@@ -301,14 +309,18 @@ def scan_asset(cfg: dict) -> None:
         asset=asset, price=closes[-1],
         open_4h=opens[-1], close_4h=closes[-1],
         high_4h=highs[-1], low_4h=lows[-1],
-        rsi_4h=rsi, volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        rsi_4h=rsi, rsi_prev_4h=rsi_prev,
+        volume_avg5=vol_avg5, volume_avg20=vol_avg20,
+        current_volume=current_volume,
         ema21_4h=ema21, in_elliott_zone=True,
         wave_start=wave_start, wave_end=wave_end,
+        prev_open_4h=opens[-2], prev_close_4h=closes[-2],
+        prev_high_4h=highs[-2], prev_low_4h=lows[-2],
     )
 
     result = evaluate_layers(payload)
     score  = result["score"]
-    layers_passed = [k for k, v in result["layers"].items() if v.passed]
+    layers_passed = [k for k, v in result["layers"].items() if v.passed or v.partial]
 
     print(f"[SCANNER] {asset} | Score: {score}/5 | RSI: {rsi:.1f} | Price: {closes[-1]}")
 
