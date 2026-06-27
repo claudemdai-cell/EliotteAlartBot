@@ -269,6 +269,9 @@ def cmd_help() -> str:
         "*Proyecciones detalladas*\n"
         "  /proyeccion btc · /proyeccion eth\n"
         "  /proyeccion link · /proyeccion sol\n\n"
+        "*Top-Down (1M→15m)*\n"
+        "  /topdown btc · /topdown eth\n"
+        "  /topdown link · /topdown sol\n\n"
         "*General*\n"
         "  /estado — resumen + precisión de ayer\n"
         "  /gems — oportunidades del mercado\n"
@@ -293,8 +296,9 @@ def asset_buttons(asset_code: str) -> list:
     """Botones de acción rápida después de ver un activo."""
     a = _asset_name(asset_code).lower()
     return [
-        [(f"📊 Proy. {a.upper()}", f"proy:{asset_code}"), ("📈 Estado general", "estado")],
-        [("💎 Gems", "gems"), ("🔕 Silenciar 4h", "silent:4")],
+        [(f"📊 Proy. {a.upper()}", f"proy:{asset_code}"),
+         (f"🔭 Top-Down {a.upper()}", f"td:{asset_code}")],
+        [("📈 Estado general", "estado"), ("🔕 Silenciar 4h", "silent:4")],
     ]
 
 
@@ -425,3 +429,75 @@ def weekly_review(monday_projs: dict, actual_prices: dict, date_str: str) -> str
 def proximity_alert_msg(alerts: list[str]) -> str:
     header = "*⚠️ Precio cerca de nivel clave*\n─────────────────────\n"
     return header + "\n".join(alerts) + "\n\n_Vigila si hay reacción en las próximas velas._"
+
+
+# ─── TOP-DOWN ─────────────────────────────────────────────────────────────────
+
+def topdown_msg(asset: str, analyses: list, score: dict, conclusion: str) -> str:
+    """
+    Mensaje de análisis top-down completo.
+    analyses = lista de dicts de topdown.py
+    score    = dict de topdown_score()
+    """
+    from candle_patterns import fmt_pattern
+    name = _asset_name(asset)
+    icon = _icon(name)
+
+    lines = [
+        f"*{icon} {name} — Análisis Top-Down*",
+        "─────────────────────",
+    ]
+
+    current_group = None
+    group_labels  = {"MACRO": "*MACRO — Tendencia estructural*",
+                     "ESTRUCTURA": "*ESTRUCTURA — Confirmación*",
+                     "TIMING": "*TIMING — Entrada de precisión*"}
+
+    for a in analyses:
+        if a["group"] != current_group:
+            current_group = a["group"]
+            lines.append("")
+            lines.append(group_labels.get(current_group, f"*{current_group}*"))
+
+        ti      = TREND_ICON.get(a["trend"], "?")
+        label   = a["label"].ljust(5)
+        rsi_str = f"RSI {a['rsi']:.0f}"
+        pat     = fmt_pattern(a.get("pattern"))
+        pat_str = f"  {pat}" if pat else ""
+        elliott = a.get("elliott", "")
+
+        lines.append(
+            f"  {ti} *{label}* {rsi_str}  _{elliott}_{pat_str}"
+        )
+
+    # Score de alineación
+    sp    = score.get("score_pct", 50)
+    bull  = score.get("bullish_tfs", 0)
+    bear  = score.get("bearish_tfs", 0)
+    align = score.get("alignment", "Mixto")
+    bar   = _score_bar(sp / 20, 5)   # 0-100 → 0-5 bloques
+
+    lines += [
+        "",
+        "─────────────────────",
+        f"*Alineación:* [{bar}] {sp:.0f}/100",
+        f"📈 {bull} alcistas · 📉 {bear} bajistas · ↔️ {score.get('neutral_tfs',0)} laterales",
+        f"_{align}_",
+        "",
+        "*🧠 CONCLUSIÓN ELLIOTT*",
+        conclusion,
+    ]
+
+    return "\n".join(lines)
+
+
+def topdown_buttons(asset_code: str) -> list:
+    """Botones para navegar entre activos en el top-down."""
+    assets = [("₿ BTC", "td:BTCUSD"), ("Ξ ETH", "td:ETHUSD"),
+              ("⬡ LINK", "td:LINKUSD"), ("◎ SOL", "td:SOLUSD")]
+    row1   = [(lbl, cb) for lbl, cb in assets if cb != f"td:{asset_code}"][:3]
+    return [
+        row1,
+        [(f"📊 Proy. {_asset_name(asset_code)}", f"proy:{asset_code}"),
+         ("📈 Estado", "estado")],
+    ]

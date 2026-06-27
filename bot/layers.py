@@ -11,6 +11,7 @@ BONUS  — EMAs     : precio > EMA21 en 4H
 
 from dataclasses import dataclass, field
 from fibonacci import in_golden_zone
+from candle_patterns import detect as detect_candle
 
 
 @dataclass
@@ -121,25 +122,28 @@ def evaluate_layers(p: WebhookPayload) -> dict:
         c4 = LayerResult(passed=False,
                          detail=f"RSI {p.rsi_4h:.1f} ≥ 40 ✗ (no oversold)")
 
-    # C5 — Vela de reversión 4H
-    o, h, l, c = p.open_4h, p.high_4h, p.low_4h, p.close_4h
-    hammer   = _is_hammer(o, h, l, c)
-    engulf   = _is_engulfing(o, c, p.prev_open_4h, p.prev_close_4h)
-    pin_bar  = _is_pin_bar(o, h, l, c)
+    # C5 — Vela de reversión 4H (usa candle_patterns expandido)
+    opens_4  = [p.prev_open_4h,  p.open_4h]
+    highs_4  = [p.prev_high_4h,  p.high_4h]
+    lows_4   = [p.prev_low_4h,   p.low_4h]
+    closes_4 = [p.prev_close_4h, p.close_4h]
 
-    if hammer:
-        pattern = "Martillo ✓"
-    elif engulf:
-        pattern = "Engulfing alcista ✓"
-    elif pin_bar:
-        pattern = "Pin bar ✓"
-    else:
-        pattern = None
+    # Agregar dummy para que detect() tenga al menos 3 velas
+    opens_4  = [opens_4[0]]  + opens_4
+    highs_4  = [highs_4[0]]  + highs_4
+    lows_4   = [lows_4[0]]   + lows_4
+    closes_4 = [closes_4[0]] + closes_4
+
+    detected = detect_candle(opens_4, highs_4, lows_4, closes_4)
+    # Solo contar patrones alcistas como confirmación de C5
+    pattern_ok = detected and detected.get("bias") == "alcista"
+    pattern_name = detected["name"] if detected else None
 
     c5 = LayerResult(
-        passed=bool(pattern),
-        detail=pattern if pattern else
-               f"Sin patrón de reversión ✗ (o={o}, h={h}, l={l}, c={c})"
+        passed=bool(pattern_ok),
+        detail=(f"{pattern_name} ✓" if pattern_ok
+                else (f"{pattern_name} (bajista/neutral) ✗" if pattern_name
+                      else f"Sin patrón de reversión ✗"))
     )
 
     # Bonus EMA

@@ -120,6 +120,30 @@ def _build_projection(asset_code: str, state: dict) -> dict:
     return project(asset_code, candles_1d, state)
 
 
+def handle_topdown_cmd(asset_code: str) -> tuple:
+    """Retorna (texto, botones) con análisis top-down completo."""
+    from topdown import full_topdown, topdown_score, elliott_conclusion
+    from messages import topdown_msg, topdown_buttons
+    from scanner import WATCHLIST, DYNAMIC_STATE
+
+    cfg = next((c for c in WATCHLIST if c["asset"] == asset_code), None)
+    if not cfg:
+        return (f"No tengo {asset_code.replace('USD','')} en el watchlist.", None)
+
+    state    = DYNAMIC_STATE.get(asset_code, {})
+    send_telegram("⏳ Analizando 7 timeframes... puede tardar 30-45 segundos.", force=True)
+
+    analyses  = full_topdown(cfg["symbol"], state)
+    if not analyses:
+        return ("No pude obtener datos ahora. Intenta en un momento.", None)
+
+    score      = topdown_score(analyses)
+    conclusion = elliott_conclusion(analyses, state)
+    text       = topdown_msg(asset_code, analyses, score, conclusion)
+    btns       = topdown_buttons(asset_code)
+    return (text, btns)
+
+
 def handle_projection_cmd(asset_code: str) -> tuple:
     """Retorna (texto, botones) con proyección detallada."""
     from messages import cmd_asset_status, asset_buttons
@@ -139,6 +163,15 @@ def handle_telegram_command(text: str):
     from scanner import WATCHLIST, DYNAMIC_STATE, get_asset_status
 
     text = text.strip().lower()
+
+    # Top-down: /topdown btc
+    if text.startswith("/topdown") or text.startswith("topdown"):
+        parts = text.split()
+        key   = parts[1] if len(parts) > 1 else ""
+        code  = PROJECTION_ALIAS.get(key, "")
+        if not code:
+            return "Uso: /topdown btc | eth | link | sol"
+        return handle_topdown_cmd(code)
 
     # /proyeccion btc | /proyeccion eth ...
     if text.startswith("/proyeccion") or text.startswith("proyeccion"):
@@ -221,6 +254,9 @@ def handle_telegram_command(text: str):
 
 def handle_elliott_callback(cb_data: str):
     """Maneja clics de botones inline del bot Elliott."""
+    if cb_data.startswith("td:"):
+        asset_code = cb_data.split(":", 1)[1]
+        return handle_topdown_cmd(asset_code)
     if cb_data.startswith("proy:"):
         asset_code = cb_data.split(":", 1)[1]
         return handle_projection_cmd(asset_code)
