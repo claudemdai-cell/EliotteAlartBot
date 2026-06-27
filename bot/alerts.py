@@ -4,6 +4,8 @@ Soporta texto, foto (logo de la crypto) y botones inline (callback + copy_text).
 """
 
 import os
+import time as _time
+import datetime
 import requests
 from dotenv import load_dotenv
 
@@ -11,6 +13,26 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID        = os.getenv("TELEGRAM_CHAT_ID")
+
+# Modo silencioso — UTC timestamp hasta el que se suprimen alertas del scanner
+_silent_until: float = 0.0
+
+
+def set_silent(hours: float) -> str:
+    global _silent_until
+    _silent_until = _time.time() + hours * 3600
+    until_utc = datetime.datetime.utcfromtimestamp(_silent_until).strftime("%H:%M UTC")
+    return f"🔕 Modo silencioso activado hasta las {until_utc}.\n_Los comandos siguen respondiendo._"
+
+
+def clear_silent() -> str:
+    global _silent_until
+    _silent_until = 0.0
+    return "🔔 Alertas reactivadas."
+
+
+def is_silent() -> bool:
+    return _time.time() < _silent_until
 
 
 def logo_url(asset: str) -> str:
@@ -36,8 +58,11 @@ def _build_keyboard(buttons: list) -> dict:
     return {"inline_keyboard": rows}
 
 
-def send_telegram(text: str, buttons: list | None = None) -> bool:
-    """Envía mensaje Markdown a Telegram. Retorna True si fue exitoso."""
+def send_telegram(text: str, buttons: list | None = None, force: bool = False) -> bool:
+    """Envía mensaje Markdown a Telegram. force=True omite el modo silencioso."""
+    if not force and is_silent():
+        print("[ALERT] Silencio activo — mensaje omitido")
+        return False
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("[ALERT] TELEGRAM_TOKEN o CHAT_ID no configurados en .env")
         return False

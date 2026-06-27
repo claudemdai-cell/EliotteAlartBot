@@ -14,7 +14,10 @@ from fibonacci import in_golden_zone
 from alerts import send_telegram, send_telegram_photo, logo_url
 from log import log_alert
 from gem_hunter import run_gem_scan, send_gem_report
-from messages import daily_summary, analysis_update, gem_report
+from messages import daily_summary, analysis_update, gem_report, accuracy_block, weekly_outlook, weekly_review, proximity_alert_msg
+from projections import project, PROJECTION_ASSETS
+from proximity_alerts import check_proximity, check_volume_anomaly
+from accuracy import save_projections, compute_accuracy, get_monday_projections
 
 # Timezone offset — cambia segun tu pais
 # -5 = Colombia, Peru, Ecuador | -3 = Argentina | -6 = Mexico CST
@@ -292,18 +295,18 @@ def scan_asset(cfg: dict) -> None:
     closes  = [float(c['c']) for c in candles]
     volumes = [float(c['v']) for c in candles]
 
-    rsi       = compute_rsi(closes[:-1])
-    rsi_prev  = compute_rsi(closes[:-2])
-    ema21     = compute_ema(closes, 21)
+    rsi           = compute_rsi(closes[:-1])
+    rsi_prev      = compute_rsi(closes[:-2])
+    ema21         = compute_ema(closes, 21)
     current_volume = volumes[-1]
-    vol_avg5  = sum(volumes[-6:-1]) / 5
-    vol_avg20 = sum(volumes[-21:-1]) / 20
+    vol_avg5      = sum(volumes[-6:-1]) / 5
+    vol_avg20     = sum(volumes[-21:-1]) / 20
 
-    # Usar niveles dinamicos si existen, si no usar defaults del 90d
     wave_start = state.get("wave_start", min(lows))
     wave_end   = state.get("wave_end",   max(highs))
     stop       = state.get("stop",       min(lows) * 0.98)
     target     = state.get("target",     max(highs) * 1.5)
+    trend      = state.get("trend", "bajista")
 
     payload = WebhookPayload(
         asset=asset, price=closes[-1],
@@ -318,29 +321,45 @@ def scan_asset(cfg: dict) -> None:
         prev_high_4h=highs[-2], prev_low_4h=lows[-2],
     )
 
-    result = evaluate_layers(payload)
-    score  = result["score"]
+    result        = evaluate_layers(payload)
+    score         = result["score"]
     layers_passed = [k for k, v in result["layers"].items() if v.passed or v.partial]
+    price         = closes[-1]
 
-    print(f"[SCANNER] {asset} | Score: {score}/5 | RSI: {rsi:.1f} | Price: {closes[-1]}")
+    print(f"[SCANNER] {asset} | Score: {score}/5 | RSI: {rsi:.1f} | Price: {price}")
 
+    # Alerta Elliott principal (score ≥ 4)
     sent = False
     if score >= 4:
-        text = format_alert_text(payload, result, stop, target)
-        sent = send_telegram_photo(logo_url(asset), text, buttons=alert_buttons(stop, target))
+        from messages import silence_buttons
+        text    = format_alert_text(payload, result, stop, target)
+        buttons = alert_buttons(stop, target) + silence_buttons()
+        sent    = send_telegram_photo(logo_url(asset), text, buttons=buttons)
 
-    log_alert(asset, score, closes[-1], stop, target, layers_passed, sent)
+    # Alerta de volumen anómalo (independiente del score)
+    vol_msg = check_volume_anomaly(asset, price, current_volume, vol_avg20, trend)
+    if vol_msg:
+        send_telegram(vol_msg)
+
+    # Alertas de proximidad a niveles clave
+    prox = check_proximity(asset, price, state)
+    if prox:
+        send_telegram(proximity_alert_msg(prox))
+
+    log_alert(asset, score, price, stop, target, layers_passed, sent)
 
 
 # ─── RESUMEN DIARIO ───────────────────────────────────────────────────────────
 
 def send_daily_summary() -> None:
-    """Envia resumen diario con botones de acción rápida."""
-    from messages import summary_buttons
-    local = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
+    """Resumen diario con precisión de ayer y botones."""
+    from messages import summary_buttons, accuracy_block
+    local    = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
     date_str = local.strftime("%d %b %Y")
 
-    assets_data = []
+    assets_data   = []
+    actual_prices = {}
+
     for cfg in WATCHLIST:
         s = get_asset_status(cfg)
         if s:
@@ -349,9 +368,75 @@ def send_daily_summary() -> None:
             s["target"] = state.get("target", s["target"])
             s["stop"]   = state.get("stop",   s["stop"])
             assets_data.append(s)
+            actual_prices[cfg["asset"]] = s["price"]
+
+    # Precisión de ayer
+    acc = compute_accuracy(actual_prices)
 
     msg = daily_summary(assets_data, date_str)
-    send_telegram(msg, buttons=summary_buttons())
+    if acc:
+        msg += "\n\n" + accuracy_block(acc)
+
+    # Guardar proyecciones de HOY para comparar mañana
+    projs_today = {}
+    for cfg in WATCHLIST:
+        if cfg["asset"] in PROJECTION_ASSETS:
+            state      = DYNAMIC_STATE.get(cfg["asset"], {})
+            candles_1d = get_ohlcv(cfg["symbol"], "1D", 90)
+            proj       = project(cfg["asset"], candles_1d, state)
+            if proj:
+                projs_today[cfg["asset"]] = proj
+
+    if projs_today:
+        save_projections(projs_today)
+
+    send_telegram(msg, buttons=summary_buttons(), force=True)
+
+
+def send_weekly_outlook() -> None:
+    """Perspectiva semanal — se envía los lunes a las 6AM."""
+    local    = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
+    date_str = local.strftime("%d %b %Y")
+
+    assets_proj = []
+    for cfg in WATCHLIST:
+        if cfg["asset"] not in PROJECTION_ASSETS:
+            continue
+        state      = DYNAMIC_STATE.get(cfg["asset"], {})
+        candles_1d = get_ohlcv(cfg["symbol"], "1D", 90)
+        proj       = project(cfg["asset"], candles_1d, state)
+        if not proj:
+            continue
+        name = cfg["asset"].replace("USD", "")
+        assets_proj.append({
+            "name":        name,
+            "trend":       state.get("trend", "?"),
+            "week_target": proj["week_target"],
+            "confidence":  proj["confidence"],
+            "days_to_ath": proj["days_to_ath"],
+        })
+
+    if assets_proj:
+        from messages import weekly_outlook as outlook_msg
+        send_telegram(outlook_msg(assets_proj, date_str), force=True)
+
+
+def send_weekly_review() -> None:
+    """Review semanal — viernes 6PM — compara proyecciones del lunes con precios reales."""
+    local    = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
+    date_str = local.strftime("%d %b %Y")
+
+    monday_projs  = get_monday_projections()
+    actual_prices = {}
+    for cfg in WATCHLIST:
+        if cfg["asset"] in PROJECTION_ASSETS:
+            state = DYNAMIC_STATE.get(cfg["asset"], {})
+            if state.get("last_price"):
+                actual_prices[cfg["asset"]] = state["last_price"]
+
+    if monday_projs and actual_prices:
+        from messages import weekly_review as review_msg
+        send_telegram(review_msg(monday_projs, actual_prices, date_str), force=True)
 
 
 # ─── ANALISIS SEMANAL ─────────────────────────────────────────────────────────
@@ -389,23 +474,31 @@ def run_weekly_analysis(force: bool = False) -> None:
 
 # ─── LOOP PRINCIPAL ───────────────────────────────────────────────────────────
 
+WEEKLY_REVIEW_HOUR = 18   # Viernes 6PM local
+WEEKLY_OUTLOOK_DOW = 0    # Lunes
+
+
 def run_scanner(interval_hours: int = 4) -> None:
     """Loop principal — corre cada 4 horas."""
-    print(f"[SCANNER] Iniciando. Scan cada {interval_hours}h | Resumen 6AM | Analisis semanal.")
-    send_telegram("*Elliott Scanner iniciado*\nScan cada 4h | Resumen 6AM | Analisis semanal automatico.")
+    print(f"[SCANNER] Iniciando. Scan cada {interval_hours}h | Resumen 6AM | Análisis semanal.")
+    send_telegram(
+        "*Elliott Scanner iniciado* 🚀\n"
+        "Scan cada 4h · Resumen 6AM · Outlook lunes · Review viernes · Gems diario",
+        force=True,
+    )
 
-    last_summary_day  = None
-    last_analysis_day = None
-    last_gem_day      = None
+    last_summary_day       = None
+    last_analysis_day      = None
+    last_gem_day           = None
+    last_weekly_outlook    = None
+    last_weekly_review     = None
 
-    # Analisis inicial al arrancar
     run_weekly_analysis(force=True)
 
-    # Si ya paso las 6AM hoy, enviar resumen ahora (evita perderse el del dia)
     utc_now   = datetime.datetime.utcnow()
     local_now = utc_now + datetime.timedelta(hours=UTC_OFFSET_HOURS)
     if local_now.hour >= DAILY_SUMMARY_HOUR:
-        print(f"[SCANNER] Arranque tardio — enviando resumen del dia ({local_now.strftime('%H:%M')} local)")
+        print(f"[SCANNER] Arranque tardío — resumen del día ({local_now.strftime('%H:%M')} local)")
         send_daily_summary()
         last_summary_day = local_now.date()
 
@@ -414,36 +507,45 @@ def run_scanner(interval_hours: int = 4) -> None:
         local_now = utc_now + datetime.timedelta(hours=UTC_OFFSET_HOURS)
         today     = local_now.date()
 
-        # Resumen diario a las 6AM
+        # Resumen diario 6AM
         if local_now.hour == DAILY_SUMMARY_HOUR and last_summary_day != today:
             print(f"[SCANNER] Resumen diario ({local_now.strftime('%H:%M')} local)")
             send_daily_summary()
             last_summary_day = today
 
-        # Analisis semanal de niveles Elliott
+            # Lunes: outlook semanal (tras el resumen)
+            if local_now.weekday() == WEEKLY_OUTLOOK_DOW and last_weekly_outlook != today:
+                print("[SCANNER] Outlook semanal (lunes)")
+                send_weekly_outlook()
+                last_weekly_outlook = today
+
+        # Viernes 6PM: review semanal
+        if (local_now.hour == WEEKLY_REVIEW_HOUR
+                and local_now.weekday() == 4
+                and last_weekly_review != today):
+            print("[SCANNER] Review semanal (viernes)")
+            send_weekly_review()
+            last_weekly_review = today
+
+        # Análisis de niveles Elliott cada 7 días
         days_since_analysis = (today - last_analysis_day).days if last_analysis_day else 999
         if days_since_analysis >= ANALYSIS_INTERVAL_DAYS:
             run_weekly_analysis()
             last_analysis_day = today
 
-        # Gem scan cada 3 dias
+        # Gem scan diario
         days_since_gem = (today - last_gem_day).days if last_gem_day else 999
         if days_since_gem >= GEM_SCAN_INTERVAL_DAYS:
-            print("[SCANNER] Iniciando Gem Scan...")
+            print("[SCANNER] Gem Scan diario...")
             watchlist_set = {cfg["asset"] for cfg in WATCHLIST}
-            gems = run_gem_scan(watchlist_assets=watchlist_set)
-            # Detectar nuevas gems vs scan anterior
-            new_gems = [g for g in gems if g["symbol"] not in _prev_gems]
-            # Auto-agregar gems 💎 y 🔥 al watchlist si no estan
+            gems          = run_gem_scan(watchlist_assets=watchlist_set)
+            new_gems      = [g for g in gems if g["symbol"] not in _prev_gems]
             for g in gems:
                 if g["emoji"] in ("💎", "🔥") and not g.get("in_watchlist"):
                     asset_name = g["asset"] + "USD"
                     if not any(c["asset"] == asset_name for c in WATCHLIST):
-                        WATCHLIST.append({
-                            "asset":  asset_name,
-                            "symbol": g["symbol"],
-                        })
-                        print(f"[GEM] {g['emoji']} {asset_name} agregado al watchlist automaticamente")
+                        WATCHLIST.append({"asset": asset_name, "symbol": g["symbol"]})
+                        print(f"[GEM] {g['emoji']} {asset_name} agregado al watchlist")
             send_gem_report(gems, new_gems=new_gems if new_gems else None)
             _prev_gems.update({g["symbol"]: g for g in gems})
             last_gem_day = today

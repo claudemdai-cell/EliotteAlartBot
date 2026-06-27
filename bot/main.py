@@ -199,6 +199,15 @@ def handle_telegram_command(text: str):
         threading.Thread(target=run_now, daemon=True).start()
         return "⚡ Scan iniciado. En unos segundos te aviso si hay algo."
 
+    # Modo silencioso
+    if text in ("/silenciar", "silenciar", "/mute", "mute"):
+        from messages import silence_buttons
+        return ("¿Cuánto tiempo quieres silenciar las alertas del scanner?", silence_buttons())
+
+    if text in ("/reactivar", "reactivar", "/unmute", "unmute"):
+        from alerts import clear_silent
+        return clear_silent()
+
     # Ayuda
     if text in ("/ayuda", "/help", "ayuda", "help", "hola", "menu"):
         return cmd_help()
@@ -206,7 +215,7 @@ def handle_telegram_command(text: str):
     return (
         "No entendí ese comando.\n\n"
         "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
-        "Comandos: /estado /btc /eth /sol /link /gems /scan /proyeccion btc"
+        "Comandos: /estado /btc /eth /sol /link /gems /scan /proyeccion btc /silenciar"
     )
 
 
@@ -221,6 +230,15 @@ def handle_elliott_callback(cb_data: str):
         return handle_telegram_command("/gems")
     if cb_data == "scan":
         return handle_telegram_command("/scan")
+    if cb_data.startswith("silent:"):
+        from alerts import set_silent, clear_silent
+        hours_str = cb_data.split(":", 1)[1]
+        if hours_str == "0":
+            return clear_silent()
+        try:
+            return set_silent(float(hours_str))
+        except ValueError:
+            return "Valor inválido."
     return None
 
 

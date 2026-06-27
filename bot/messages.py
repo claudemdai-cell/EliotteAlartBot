@@ -270,12 +270,20 @@ def cmd_help() -> str:
         "  /proyeccion btc · /proyeccion eth\n"
         "  /proyeccion link · /proyeccion sol\n\n"
         "*General*\n"
-        "  /estado — resumen de todos los activos\n"
+        "  /estado — resumen + precisión de ayer\n"
         "  /gems — oportunidades del mercado\n"
-        "  /scan — forzar scan ahora\n"
+        "  /scan — forzar scan ahora\n\n"
+        "*Alertas automáticas*\n"
+        "  📅 Lunes 6AM — outlook semanal\n"
+        "  📊 Viernes 6PM — review de precisión\n"
+        "  ⚡ Volumen anómalo — aviso al instante\n"
+        "  📍 Proximidad a nivel clave — aviso al instante\n\n"
+        "*Control*\n"
+        "  /silenciar — pausar alertas (2h / 4h / 8h)\n"
+        "  /reactivar — volver a activar\n"
         "  /ayuda — este menú\n\n"
         "─────────────────────\n"
-        "_También puedes escribir el nombre de cualquier crypto que monitoreo._"
+        "_Botones disponibles en cada mensaje._"
     )
 
 
@@ -286,7 +294,7 @@ def asset_buttons(asset_code: str) -> list:
     a = _asset_name(asset_code).lower()
     return [
         [(f"📊 Proy. {a.upper()}", f"proy:{asset_code}"), ("📈 Estado general", "estado")],
-        [("💎 Gems", "gems"), ("⚡ Forzar scan", "scan")],
+        [("💎 Gems", "gems"), ("🔕 Silenciar 4h", "silent:4")],
     ]
 
 
@@ -295,5 +303,125 @@ def summary_buttons() -> list:
     return [
         [("₿ BTC", "proy:BTCUSD"), ("Ξ ETH", "proy:ETHUSD")],
         [("⬡ LINK", "proy:LINKUSD"), ("◎ SOL", "proy:SOLUSD")],
-        [("💎 Gems", "gems"), ("⚡ Scan ahora", "scan")],
+        [("💎 Gems", "gems"), ("🔕 Silenciar 8h", "silent:8")],
     ]
+
+
+def silence_buttons() -> list:
+    """Botones para elegir cuánto tiempo silenciar."""
+    return [
+        [("🔕 2h", "silent:2"), ("🔕 4h", "silent:4"), ("🔕 8h", "silent:8")],
+        [("🔔 Reactivar", "silent:0"), ("📈 Estado", "estado")],
+    ]
+
+
+# ─── PRECISIÓN ────────────────────────────────────────────────────────────────
+
+def accuracy_block(acc: dict) -> str:
+    """
+    Bloque de precisión para incluir en el resumen matutino.
+    acc = { results: {...}, avg: 78.5, date: "2026-06-26" }
+    """
+    if not acc:
+        return ""
+    lines = [f"*🎯 Precisión de ayer ({acc['date']})*"]
+    for asset, r in acc.get("results", {}).items():
+        name  = _asset_name(asset)
+        icon  = _icon(name)
+        proj  = fmt_price(r["projected"])
+        real  = fmt_price(r["actual"])
+        pct   = r["accuracy"]
+        bar   = "█" * int(pct / 20) + "░" * (5 - int(pct / 20))
+        lines.append(f"  {icon} {name}  [{bar}] {pct:.0f}%  (estimé {proj} → real {real})")
+    lines.append(f"  _Promedio: {acc['avg']:.0f}%_")
+    return "\n".join(lines)
+
+
+# ─── OUTLOOK SEMANAL (LUNES) ──────────────────────────────────────────────────
+
+def weekly_outlook(assets_proj: list[dict], date_str: str) -> str:
+    """
+    Mensaje de perspectiva semanal — se envía los lunes a las 6AM.
+    assets_proj = [{ name, trend, day_close, week_target, pct_to_ath, days_to_ath, confidence }]
+    """
+    lines = [
+        f"*📅 Perspectiva Semanal — {date_str}*",
+        "_Lo que espero esta semana en los 4 principales:_",
+        "─────────────────────",
+        "",
+    ]
+
+    for a in assets_proj:
+        name  = a.get("name", "?")
+        icon  = _icon(name)
+        trend = a.get("trend", "?")
+        ti    = TREND_ICON.get(trend, "?")
+        wt    = fmt_price(a.get("week_target", 0))
+        conf  = a.get("confidence", 0)
+        ath_d = a.get("days_to_ath", 0)
+
+        lines.append(
+            f"{icon} *{name}* {ti} {TREND_TXT.get(trend, trend).split(' —')[0]}\n"
+            f"   Target semana: {wt}  ·  Confianza: {conf}%\n"
+            f"   ATH estimado: ~{ath_d} días a velocidad actual"
+        )
+        lines.append("")
+
+    lines += [
+        "─────────────────────",
+        "_El viernes te digo qué tan cerca quedamos._",
+    ]
+    return "\n".join(lines)
+
+
+# ─── REVIEW SEMANAL (VIERNES) ─────────────────────────────────────────────────
+
+def weekly_review(monday_projs: dict, actual_prices: dict, date_str: str) -> str:
+    """
+    Review del viernes — compara proyecciones del lunes con precios reales.
+    monday_projs = { "BTCUSD": {"week_target": X}, ... }
+    actual_prices = { "BTCUSD": 34521.0, ... }
+    """
+    lines = [
+        f"*📊 Review Semanal — {date_str}*",
+        "_Esto estimé el lunes vs cómo terminó:_",
+        "─────────────────────",
+        "",
+    ]
+
+    accs = []
+    for asset, proj in monday_projs.items():
+        actual    = actual_prices.get(asset)
+        projected = proj.get("week_target")
+        if not actual or not projected or projected == 0:
+            continue
+        name   = _asset_name(asset)
+        icon   = _icon(name)
+        error  = abs(actual - projected) / projected * 100
+        acc    = round(max(0, 100 - error), 1)
+        accs.append(acc)
+        arrow  = "✅" if acc >= 70 else ("⚠️" if acc >= 50 else "❌")
+        lines.append(
+            f"{arrow} {icon} *{name}*\n"
+            f"   Estimé: {fmt_price(projected)} → Real: {fmt_price(actual)}\n"
+            f"   Precisión: {acc:.0f}%"
+        )
+        lines.append("")
+
+    if accs:
+        avg = sum(accs) / len(accs)
+        lines += [
+            "─────────────────────",
+            f"_Precisión promedio esta semana: *{avg:.0f}%*_",
+        ]
+    else:
+        lines.append("_Sin proyecciones del lunes para comparar._")
+
+    return "\n".join(lines)
+
+
+# ─── ALERTA DE NIVEL ─────────────────────────────────────────────────────────
+
+def proximity_alert_msg(alerts: list[str]) -> str:
+    header = "*⚠️ Precio cerca de nivel clave*\n─────────────────────\n"
+    return header + "\n".join(alerts) + "\n\n_Vigila si hay reacción en las próximas velas._"
