@@ -85,6 +85,20 @@ def send_telegram_photo(photo_url: str, caption: str, buttons: list | None = Non
     return send_telegram(caption, buttons=buttons)
 
 
+def answer_callback(callback_id: str) -> None:
+    """Confirma recepción de un clic de botón inline."""
+    if not TELEGRAM_TOKEN or not callback_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_id},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
 def test_connection() -> bool:
     """Envía mensaje de prueba para verificar que el bot funciona."""
     return send_telegram("✅ *Elliott Alert Bot* conectado y funcionando.")

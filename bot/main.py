@@ -74,39 +74,95 @@ def start_keepalive_thread():
 
 # ─── COMANDOS TELEGRAM ────────────────────────────────────────────────────────
 
-def handle_telegram_command(text: str) -> str:
-    """Procesa comando/mensaje y retorna respuesta."""
-    from messages import cmd_help, cmd_asset_status, daily_summary
+PROJECTION_ALIAS = {
+    "btcusd": "BTCUSD", "ethusd": "ETHUSD",
+    "linkusd": "LINKUSD", "solusd": "SOLUSD",
+    "btc": "BTCUSD", "eth": "ETHUSD",
+    "link": "LINKUSD", "sol": "SOLUSD",
+}
+
+ASSET_ALIAS = {
+    "/btc": "BTCUSD", "btc": "BTCUSD", "bitcoin": "BTCUSD",
+    "/eth": "ETHUSD", "eth": "ETHUSD", "ethereum": "ETHUSD",
+    "/link": "LINKUSD", "link": "LINKUSD", "chainlink": "LINKUSD",
+    "/sol": "SOLUSD", "sol": "SOLUSD", "solana": "SOLUSD",
+    "/jasmy": "JASMYUSD", "jasmy": "JASMYUSD",
+}
+
+
+def _get_asset_data(asset_code: str):
+    """Retorna (s, state) para un activo, o (None, None) si falla."""
+    from scanner import WATCHLIST, DYNAMIC_STATE, get_asset_status
+    cfg = next((c for c in WATCHLIST if c["asset"] == asset_code), None)
+    if not cfg:
+        return None, None
+    state = DYNAMIC_STATE.get(asset_code, {})
+    s = get_asset_status(cfg)
+    if not s:
+        return None, None
+    s["trend"]  = state.get("trend", "?")
+    s["target"] = state.get("target", s["target"])
+    s["stop"]   = state.get("stop",   s["stop"])
+    return s, state
+
+
+def _build_projection(asset_code: str, state: dict) -> dict:
+    """Obtiene proyección para un activo principal."""
+    from projections import project, PROJECTION_ASSETS
+    from scanner import get_ohlcv
+    from scanner import WATCHLIST
+    if asset_code not in PROJECTION_ASSETS:
+        return {}
+    cfg = next((c for c in WATCHLIST if c["asset"] == asset_code), None)
+    if not cfg:
+        return {}
+    candles_1d = get_ohlcv(cfg["symbol"], "1D", 90)
+    return project(asset_code, candles_1d, state)
+
+
+def handle_projection_cmd(asset_code: str) -> tuple:
+    """Retorna (texto, botones) con proyección detallada."""
+    from messages import cmd_asset_status, asset_buttons
+    s, state = _get_asset_data(asset_code)
+    if not s:
+        return ("No pude obtener datos ahora. Intenta en un momento.", None)
+    proj  = _build_projection(asset_code, state)
+    name  = asset_code.replace("USD", "")
+    text  = cmd_asset_status(name, s, proj=proj)
+    btns  = asset_buttons(asset_code)
+    return (text, btns)
+
+
+def handle_telegram_command(text: str):
+    """Procesa comando/mensaje. Retorna str o (str, buttons)."""
+    from messages import cmd_help, cmd_asset_status, daily_summary, summary_buttons, asset_buttons
     from scanner import WATCHLIST, DYNAMIC_STATE, get_asset_status
 
     text = text.strip().lower()
 
-    # Mapa de aliases
-    alias = {
-        "/btc": "BTCUSD", "btc": "BTCUSD", "bitcoin": "BTCUSD",
-        "/eth": "ETHUSD", "eth": "ETHUSD", "ethereum": "ETHUSD",
-        "/link": "LINKUSD", "link": "LINKUSD", "chainlink": "LINKUSD",
-        "/sol": "SOLUSD", "sol": "SOLUSD", "solana": "SOLUSD",
-        "/jasmy": "JASMYUSD", "jasmy": "JASMYUSD",
-    }
+    # /proyeccion btc | /proyeccion eth ...
+    if text.startswith("/proyeccion") or text.startswith("proyeccion"):
+        parts = text.split()
+        key   = parts[1] if len(parts) > 1 else ""
+        code  = PROJECTION_ALIAS.get(key, "")
+        if not code:
+            return "Uso: /proyeccion btc | eth | link | sol"
+        return handle_projection_cmd(code)
 
-    # Comando: activo especifico
-    if text in alias:
-        asset_name = alias[text]
-        cfg = next((c for c in WATCHLIST if c["asset"] == asset_name), None)
-        if not cfg:
-            return f"No tengo {text.upper()} en el watchlist."
-        state = DYNAMIC_STATE.get(asset_name, {})
-        s = get_asset_status(cfg)
+    # Activo específico — incluye proyección para los 4 principales
+    if text in ASSET_ALIAS:
+        asset_code = ASSET_ALIAS[text]
+        s, state = _get_asset_data(asset_code)
         if not s:
             return "No pude obtener datos ahora. Intenta en un momento."
-        s["trend"]  = state.get("trend", "?")
-        s["target"] = state.get("target", s["target"])
-        s["stop"]   = state.get("stop",   s["stop"])
-        name = asset_name.replace("USD","")
-        return cmd_asset_status(name, s)
+        from projections import PROJECTION_ASSETS
+        proj = _build_projection(asset_code, state) if asset_code in PROJECTION_ASSETS else {}
+        name = asset_code.replace("USD", "")
+        text_resp = cmd_asset_status(name, s, proj=proj)
+        btns = asset_buttons(asset_code)
+        return (text_resp, btns)
 
-    # Comando: estado general
+    # Estado general
     if text in ("/estado", "/resumen", "estado", "resumen", "/start"):
         import datetime
         assets_data = []
@@ -121,53 +177,90 @@ def handle_telegram_command(text: str) -> str:
         utc_offset = int(os.getenv("UTC_OFFSET_HOURS", -5))
         local = datetime.datetime.utcnow() + datetime.timedelta(hours=utc_offset)
         date_str = local.strftime("%d %b %Y")
-        return daily_summary(assets_data, date_str)
+        return (daily_summary(assets_data, date_str), summary_buttons())
 
-    # Comando: gems
+    # Gems
     if text in ("/gems", "gems", "/gemas", "gemas"):
         from scanner import _prev_gems
         if not _prev_gems:
-            return "Todavia no he hecho el primer gem scan. Corre cada 3 dias. Espera al proximo ciclo."
+            return "Todavía no he hecho el primer gem scan. Se ejecuta diariamente. Espera al próximo ciclo."
         gems = sorted(_prev_gems.values(),
-                      key=lambda x: ({"💎":0,"🔥":1,"⭐":2,"👀":3,"📊":4}.get(x["emoji"],5), -x["score"]))
+                      key=lambda x: ({"💎": 0, "🔥": 1, "⭐": 2, "👀": 3, "📊": 4}.get(x["emoji"], 5), -x["score"]))
         from messages import gem_report
         msgs = gem_report(gems[:20])
-        return msgs[0]  # Solo primer mensaje si hay varios
+        return msgs[0]
 
-    # Comando: forzar scan
+    # Forzar scan
     if text in ("/scan", "scan", "/escanear"):
         def run_now():
             from scanner import WATCHLIST as WL, scan_asset
             for cfg in WL:
                 scan_asset(cfg)
         threading.Thread(target=run_now, daemon=True).start()
-        return "Scan iniciado. En unos segundos te aviso si hay algo."
+        return "⚡ Scan iniciado. En unos segundos te aviso si hay algo."
 
-    # Comando: ayuda
+    # Ayuda
     if text in ("/ayuda", "/help", "ayuda", "help", "hola", "menu"):
         return cmd_help()
 
-    # Texto libre — respuesta generica
     return (
-        "No entendi ese comando.\n\n"
+        "No entendí ese comando.\n\n"
         "Escribe /ayuda para ver todo lo que puedo hacer.\n\n"
-        "Comandos rapidos: /estado /btc /eth /sol /link /gems /scan"
+        "Comandos: /estado /btc /eth /sol /link /gems /scan /proyeccion btc"
     )
+
+
+def handle_elliott_callback(cb_data: str):
+    """Maneja clics de botones inline del bot Elliott."""
+    if cb_data.startswith("proy:"):
+        asset_code = cb_data.split(":", 1)[1]
+        return handle_projection_cmd(asset_code)
+    if cb_data in ("estado", "resumen"):
+        return handle_telegram_command("/estado")
+    if cb_data == "gems":
+        return handle_telegram_command("/gems")
+    if cb_data == "scan":
+        return handle_telegram_command("/scan")
+    return None
+
+
+def _send_elliott_response(response) -> None:
+    """Envía respuesta str o (str, buttons)."""
+    if isinstance(response, tuple):
+        text, buttons = response
+        send_telegram(text, buttons=buttons)
+    elif response:
+        send_telegram(response)
 
 
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    """Recibe updates de Telegram y responde comandos."""
+    """Recibe updates de Telegram y responde comandos y botones inline."""
     data = request.get_json(force=True, silent=True)
     if not data:
         return jsonify({"ok": True})
 
+    expected = os.getenv("TELEGRAM_CHAT_ID", "")
+
+    # Clic en botón inline
+    cb = data.get("callback_query")
+    if cb:
+        from alerts import answer_callback
+        chat_id = (cb.get("message") or {}).get("chat", {}).get("id")
+        cb_data = cb.get("data", "")
+        answer_callback(cb.get("id", ""))
+        if not expected or str(chat_id) != str(expected):
+            return jsonify({"ok": True})
+        print(f"[TELEGRAM] Botón: {cb_data}")
+        response = handle_elliott_callback(cb_data)
+        _send_elliott_response(response)
+        return jsonify({"ok": True})
+
+    # Mensaje de texto
     msg = data.get("message") or data.get("edited_message")
     if not msg:
         return jsonify({"ok": True})
 
-    # Solo aceptar mensajes del chat configurado
-    expected = os.getenv("TELEGRAM_CHAT_ID", "")
     if not expected or str(msg.get("chat", {}).get("id")) != str(expected):
         print("[TELEGRAM] Mensaje de chat desconocido, ignorado")
         return jsonify({"ok": True})
@@ -176,12 +269,8 @@ def telegram_webhook():
     if not text:
         return jsonify({"ok": True})
 
-    print(f"[TELEGRAM] Mensaje recibido: {text}")
-
-    response = handle_telegram_command(text)
-    if response:
-        send_telegram(response)
-
+    print(f"[TELEGRAM] Mensaje: {text}")
+    _send_elliott_response(handle_telegram_command(text))
     return jsonify({"ok": True})
 
 

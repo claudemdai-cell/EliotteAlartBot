@@ -21,7 +21,7 @@ from messages import daily_summary, analysis_update, gem_report
 UTC_OFFSET_HOURS = -5
 DAILY_SUMMARY_HOUR = 6   # 6:00 AM hora local
 ANALYSIS_INTERVAL_DAYS = 7   # Re-analizar niveles cada 7 dias
-GEM_SCAN_INTERVAL_DAYS = 3   # Gem scan cada 3 dias
+GEM_SCAN_INTERVAL_DAYS = 1   # Gem scan diario
 
 # Cache de gems previas para detectar novedades
 _prev_gems: dict = {}  # { symbol: gem_data }
@@ -335,7 +335,8 @@ def scan_asset(cfg: dict) -> None:
 # ─── RESUMEN DIARIO ───────────────────────────────────────────────────────────
 
 def send_daily_summary() -> None:
-    """Envia resumen diario usando el nuevo formato de messages.py"""
+    """Envia resumen diario con botones de acción rápida."""
+    from messages import summary_buttons
     local = datetime.datetime.utcnow() + datetime.timedelta(hours=UTC_OFFSET_HOURS)
     date_str = local.strftime("%d %b %Y")
 
@@ -350,7 +351,7 @@ def send_daily_summary() -> None:
             assets_data.append(s)
 
     msg = daily_summary(assets_data, date_str)
-    send_telegram(msg)
+    send_telegram(msg, buttons=summary_buttons())
 
 
 # ─── ANALISIS SEMANAL ─────────────────────────────────────────────────────────

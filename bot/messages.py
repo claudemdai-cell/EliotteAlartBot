@@ -1,13 +1,23 @@
 """
 Plantillas de mensajes para Telegram.
-Mensajes claros, directos y sin ruido tecnico.
+Formato visual mejorado con barras, emojis y narrativa.
 """
 
 import datetime
 
+TREND_ICON = {"alcista": "📈", "bajista": "📉", "lateral": "↔️"}
+TREND_TXT  = {
+    "alcista": "Alcista — compradores dominan",
+    "bajista": "Bajista — vendedores dominan",
+    "lateral": "Lateral — sin dirección clara",
+}
+ASSET_ICON = {
+    "BTC": "₿", "ETH": "Ξ", "LINK": "⬡", "SOL": "◎",
+    "JASMY": "✧",
+}
+
 
 def fmt_price(price: float) -> str:
-    """Formatea precio segun su magnitud."""
     if price >= 1000:
         return f"${price:,.2f}"
     elif price >= 1:
@@ -23,227 +33,267 @@ def fmt_pct(pct: float) -> str:
     return f"{sign}{pct:.1f}%"
 
 
-def daily_summary(assets: list[dict], date_str: str) -> str:
-    """
-    Resumen diario limpio.
-    assets = [{ asset, price, score, rsi, dist_pct, in_zone, trend, gz_low, gz_high }]
-    """
-    hour = datetime.datetime.utcnow().hour
+def _score_bar(score: float, total: int = 5) -> str:
+    filled = int(score)
+    half   = 1 if (score - filled) >= 0.5 else 0
+    empty  = total - filled - half
+    return "█" * filled + ("▒" if half else "") + "░" * empty
 
+
+def _asset_name(raw: str) -> str:
+    return raw.replace("USD", "").replace("USDT", "").replace("_", "")
+
+
+def _icon(name: str) -> str:
+    return ASSET_ICON.get(name.upper(), "◆")
+
+
+# ─── ESTADO INDIVIDUAL ────────────────────────────────────────────────────────
+
+def cmd_asset_status(name: str, s: dict, proj: dict = None) -> str:
+    """
+    Estado completo de un activo.
+    Si proj viene con datos (solo BTC/ETH/LINK/SOL), incluye proyecciones.
+    """
+    price  = fmt_price(s["price"])
+    score  = s["score"]
+    bar    = _score_bar(score)
+    trend  = s.get("trend", "?")
+    icon   = _icon(name)
+
+    if s["in_zone"]:
+        zona = "⚡ EN GOLDEN ZONE — máxima atención"
+    elif s["dist_pct"] < 0:
+        zona = f"Falta {abs(s['dist_pct']):.0f}% para entrar en zona"
+    else:
+        zona = f"{s['dist_pct']:.0f}% por encima de la zona"
+
+    if score >= 4:
+        estado = "🔥 SETUP ACTIVO — revisa el gráfico ahora"
+    elif score == 3:
+        estado = "⚠️ Calentando — ponle ojo"
+    else:
+        estado = "⏳ Esperando — mercado en corrección"
+
+    lines = [
+        f"*{icon} {name}* · {price}",
+        "─────────────────────",
+        f"📊 Score:     [{bar}] {score}/5",
+        f"{TREND_ICON.get(trend,'?')} Tendencia: {TREND_TXT.get(trend, trend)}",
+        f"📡 RSI:       {s['rsi']:.0f}",
+        f"📍 Zona:      {zona}",
+        "",
+        f"🎯 Target: {fmt_price(s['target'])}",
+        f"🛑 Stop:   {fmt_price(s['stop'])}",
+    ]
+
+    if proj:
+        lines += [
+            "",
+            "─────────────────────",
+            "*📅 PROYECCIÓN HOY*",
+            f"   Rango esperado: {fmt_price(proj['day_low'])} — {fmt_price(proj['day_high'])}",
+            f"   Cierre estimado: ≈{fmt_price(proj['day_close'])}",
+            f"   Confianza: {proj['confidence']}%",
+            "",
+            "*📆 ESTA SEMANA*",
+            f"   Target: {fmt_price(proj['week_target'])} ({TREND_TXT.get(trend,'?').split(' —')[0].lower()})",
+            f"   Soporte: {fmt_price(proj['week_support'])}",
+            "",
+            "*⏳ DISTANCIA AL ATH*",
+            f"   ATH: {fmt_price(proj['ath'])} (+{proj['pct_to_ath']}%)",
+            f"   Estimado: ~{proj['days_to_ath']} días a velocidad actual",
+            "",
+            "*📌 POR QUÉ*",
+        ]
+        for r in proj.get("reasons", []):
+            lines.append(f"   • {r}")
+
+    lines += ["", f"_{estado}_"]
+    return "\n".join(lines)
+
+
+# ─── RESUMEN DIARIO ───────────────────────────────────────────────────────────
+
+def daily_summary(assets: list[dict], date_str: str) -> str:
+    hour = datetime.datetime.utcnow().hour
     if 5 <= hour < 12:
-        saludo = "Buenos dias"
+        saludo = "Buenos días"
     elif 12 <= hour < 19:
         saludo = "Buenas tardes"
     else:
         saludo = "Buenas noches"
 
-    # Ver si hay algo urgente
     hot = [a for a in assets if a["score"] >= 3]
-
     if any(a["score"] >= 4 for a in assets):
-        intro = "Hay un setup activo. Revisa la alerta."
+        intro = "🔥 Hay un setup activo. Revisa la alerta."
     elif hot:
-        names = ", ".join(a["asset"].replace("USD","") for a in hot)
-        intro = f"{names} se esta calentando. Ojo."
+        names = ", ".join(_asset_name(a["asset"]) for a in hot)
+        intro = f"⚠️ {names} se está calentando. Ponle ojo."
     else:
-        intro = "Todo tranquilo. Mercado aun en correccion."
+        intro = "⏳ Todo tranquilo. Mercado aún en corrección."
 
     lines = [
         f"*{saludo} — {date_str}*",
         f"_{intro}_",
         "",
+        "─────────────────────",
     ]
 
     for a in assets:
         score = a["score"]
-        price = fmt_price(a["price"])
-        rsi   = a["rsi"]
+        name  = _asset_name(a["asset"])
+        icon  = _icon(name)
+        bar   = _score_bar(score)
         trend = a.get("trend", "")
-        name  = a["asset"].replace("USD","").replace("USDT","")
+        ti    = TREND_ICON.get(trend, "?")
 
-        # Icono de estado
-        if score >= 4:
-            icon = "ALERTA"
-        elif score == 3:
-            icon = "Calentando"
-        elif a["in_zone"]:
-            icon = "En zona"
-        else:
-            icon = "Esperando"
-
-        # Distancia a la zona
         if a["in_zone"]:
-            zona = "en golden zone ahora"
+            zona = "⚡ En zona"
         elif a["dist_pct"] < 0:
-            zona = f"falta {abs(a['dist_pct']):.0f}% para la zona"
+            zona = f"−{abs(a['dist_pct']):.0f}% a zona"
         else:
-            zona = f"{a['dist_pct']:.0f}% sobre la zona"
-
-        # Barra de score
-        bar = "I" * score + "." * (5 - score)
+            zona = f"+{a['dist_pct']:.0f}% sobre zona"
 
         lines.append(
-            f"*{name}* [{bar}] {score}/5 — {icon}\n"
-            f"  {price} | RSI {rsi:.0f} | {zona}"
+            f"{icon} *{name}* [{bar}] {score}/5 {ti}\n"
+            f"   {fmt_price(a['price'])} · RSI {a['rsi']:.0f} · {zona}"
         )
 
-    lines += ["", "_El scanner revisa cada 4h. Te aviso si algo cambia._"]
+    lines += [
+        "─────────────────────",
+        "_Scan cada 4h · Gem scan diario · Análisis semanal_",
+    ]
     return "\n".join(lines)
 
 
+# ─── GEMS ────────────────────────────────────────────────────────────────────
+
 def gem_report(gems: list[dict], new_gems: list[dict] = None) -> list[str]:
-    """
-    Reporte de gems. Retorna lista de mensajes (puede ser mas de uno).
-    """
     if not gems:
-        return ["*Gem Hunter*\n\nNada destacado ahora. El mercado no tiene setups claros. Seguimos escaneando."]
+        return ["*💎 Gem Hunter*\n\nNada destacado ahora. El mercado no tiene setups claros.\n_Seguimos escaneando cada día._"]
 
     msgs = []
-
-    # Header
     total = len(gems)
-    fuego = sum(1 for g in gems if g["emoji"] in ("💎","🔥"))
+    fuego = sum(1 for g in gems if g["emoji"] in ("💎", "🔥"))
+
     lines = [
-        "*Gem Hunter — Reporte*",
-        f"_{total} oportunidades encontradas, {fuego} de alta prioridad_",
+        "*💎 Gem Hunter — Reporte*",
+        f"_{total} oportunidades · {fuego} de alta prioridad_",
+        "─────────────────────",
         "",
     ]
 
-    # Nuevas
     if new_gems:
-        lines.append(f"*NUEVAS desde el ultimo scan:*")
+        lines.append("*🆕 NUEVAS desde el último scan:*")
         for g in new_gems[:4]:
-            lines.append(f"{g['emoji']} {g['asset']} — {g['label']}")
+            lines.append(f"  {g['emoji']} *{g['asset']}* — {g['label']}")
         lines.append("")
 
-    # Por categoria
-    order = [("💎","GEM MAXIMA"), ("🔥","FUEGO"), ("⭐","ALTA OPORT"), ("👀","EN RADAR")]
+    order = [("💎", "GEM MÁXIMA"), ("🔥", "FUEGO"), ("⭐", "ALTA OPORT"), ("👀", "EN RADAR")]
     for emoji, label in order:
         group = [g for g in gems if g["emoji"] == emoji]
         if not group:
             continue
         lines.append(f"*{emoji} {label}*")
         for g in group[:5]:
-            name = g["asset"]
+            name  = g["asset"]
             price = fmt_price(g["price"])
-            rsi = g["rsi"]
-            score = g["score"]
-            wl = " [WL]" if g.get("in_watchlist") else ""
-
-            dist = g.get("dist_pct", g.get("dist_to_zone", 0))
-            if g["in_zone"]:
-                zona = "EN ZONA"
-            elif dist < 0:
-                zona = f"falta {abs(dist):.0f}%"
-            else:
-                zona = f"+{dist:.0f}% sobre zona"
-
-            lines.append(f"  *{name}*{wl}  {price}  RSI {rsi:.0f}  {score}/5  {zona}")
+            wl    = " ✅WL" if g.get("in_watchlist") else ""
+            dist  = g.get("dist_pct", g.get("dist_to_zone", 0))
+            zona  = "EN ZONA" if g["in_zone"] else (f"falta {abs(dist):.0f}%" if dist < 0 else f"+{dist:.0f}% sobre zona")
+            lines.append(
+                f"  *{name}*{wl}  {price}  RSI {g['rsi']:.0f}  {g['score']}/5  {zona}"
+            )
         lines.append("")
 
-    lines.append("_Las 💎 y 🔥 se agregan al watchlist automaticamente._")
+    lines.append("_Las 💎 y 🔥 se agregan al watchlist automáticamente._")
 
     msg = "\n".join(lines)
-    # Dividir si pasa los 4000 chars
     if len(msg) > 4000:
         half = len(lines) // 2
         msgs.append("\n".join(lines[:half]))
         msgs.append("\n".join(lines[half:]))
     else:
         msgs.append(msg)
-
     return msgs
 
 
+# ─── CAMBIO DE PANORAMA ───────────────────────────────────────────────────────
+
 def analysis_update(asset: str, levels: dict, changes: list) -> str:
-    """Notificacion de cambio de panorama."""
-    name = asset.replace("USD","").replace("USDT","")
+    name  = _asset_name(asset)
+    icon  = _icon(name)
     price = fmt_price(levels["last_price"])
-    trend = levels.get("trend","?")
-
-    trend_txt = {"alcista": "Alcista — compradores en control",
-                 "bajista": "Bajista — vendedores en control",
-                 "lateral": "Lateral — sin direccion clara"}.get(trend, trend)
-
-    gz_low  = fmt_price(levels["gz_low"])
-    gz_high = fmt_price(levels["gz_high"])
+    trend = levels.get("trend", "?")
+    ti    = TREND_ICON.get(trend, "?")
 
     dist = ((levels["last_price"] - levels["gz_low"]) / levels["gz_low"]) * 100
     if dist < 0:
         zona_txt = f"falta {abs(dist):.0f}% para entrar"
     elif levels["last_price"] <= levels["gz_high"]:
-        zona_txt = "EN ZONA AHORA"
+        zona_txt = "⚡ EN ZONA AHORA"
     else:
         zona_txt = f"{dist:.0f}% sobre la zona"
 
-    lines = [f"*Actualizacion — {name}*", ""]
+    lines = [
+        f"*{icon} {name} — Actualización de panorama*",
+        "─────────────────────",
+    ]
 
     if changes:
-        lines.append("*Que cambio:*")
+        lines.append("*¿Qué cambió?*")
         for c in changes:
-            lines.append(f"  - {c}")
+            lines.append(f"  • {c}")
         lines.append("")
 
     lines += [
-        f"Tendencia: {trend_txt}",
-        f"Precio: {price} | RSI: {levels['rsi']:.0f}",
-        f"Rango 90d: {fmt_price(levels['min_90d'])} — {fmt_price(levels['max_90d'])}",
-        f"Golden zone: {gz_low} — {gz_high}",
-        f"Estado: {zona_txt}",
-        f"Stop: {fmt_price(levels['stop'])} | Target: {fmt_price(levels['target'])}",
+        f"{ti} Tendencia: {TREND_TXT.get(trend, trend)}",
+        f"💰 Precio: {price} · RSI: {levels['rsi']:.0f}",
+        f"📏 Rango 90d: {fmt_price(levels['min_90d'])} — {fmt_price(levels['max_90d'])}",
+        f"🌟 Golden zone: {fmt_price(levels['gz_low'])} — {fmt_price(levels['gz_high'])}",
+        f"📍 Estado: {zona_txt}",
+        f"🎯 Target: {fmt_price(levels['target'])} · 🛑 Stop: {fmt_price(levels['stop'])}",
     ]
-
     return "\n".join(lines)
 
+
+# ─── AYUDA ────────────────────────────────────────────────────────────────────
 
 def cmd_help() -> str:
     return (
         "*Elliott Alert Bot*\n"
-        "_Comandos disponibles:_\n\n"
-        "/estado — resumen rapido de todos los activos\n"
-        "/btc — estado de Bitcoin\n"
-        "/eth — estado de Ethereum\n"
-        "/link — estado de Chainlink\n"
-        "/sol — estado de Solana\n"
-        "/jasmy — estado de Jasmy\n"
-        "/gems — ultimas gems encontradas\n"
-        "/scan — forzar scan ahora\n"
-        "/ayuda — ver este menu\n\n"
-        "_Tambien puedes escribir el nombre de cualquier crypto que monitoreo._"
+        "─────────────────────\n"
+        "*Análisis por activo*\n"
+        "  /btc · /eth · /link · /sol · /jasmy\n\n"
+        "*Proyecciones detalladas*\n"
+        "  /proyeccion btc · /proyeccion eth\n"
+        "  /proyeccion link · /proyeccion sol\n\n"
+        "*General*\n"
+        "  /estado — resumen de todos los activos\n"
+        "  /gems — oportunidades del mercado\n"
+        "  /scan — forzar scan ahora\n"
+        "  /ayuda — este menú\n\n"
+        "─────────────────────\n"
+        "_También puedes escribir el nombre de cualquier crypto que monitoreo._"
     )
 
 
-def cmd_asset_status(name: str, s: dict) -> str:
-    """Estado individual de un activo."""
-    price = fmt_price(s["price"])
-    score = s["score"]
-    bar   = "I" * score + "." * (5 - score)
+# ─── BOTONES ─────────────────────────────────────────────────────────────────
 
-    if s["in_zone"]:
-        zona = "EN GOLDEN ZONE — alta atencion"
-    elif s["dist_pct"] < 0:
-        zona = f"falta {abs(s['dist_pct']):.0f}% para entrar en zona"
-    else:
-        zona = f"{s['dist_pct']:.0f}% sobre la zona"
+def asset_buttons(asset_code: str) -> list:
+    """Botones de acción rápida después de ver un activo."""
+    a = _asset_name(asset_code).lower()
+    return [
+        [(f"📊 Proy. {a.upper()}", f"proy:{asset_code}"), ("📈 Estado general", "estado")],
+        [("💎 Gems", "gems"), ("⚡ Forzar scan", "scan")],
+    ]
 
-    trend = s.get("trend", "?")
-    trend_icon = {"alcista": "Alcista", "bajista": "Bajista", "lateral": "Lateral"}.get(trend, "?")
 
-    if score >= 4:
-        estado = "SETUP ACTIVO — revisa el grafico"
-    elif score == 3:
-        estado = "Calentando — ponle ojo"
-    else:
-        estado = "Esperando — mercado en correccion"
-
-    return (
-        f"*{name}*\n\n"
-        f"Precio: {price}\n"
-        f"Score:  [{bar}] {score}/5\n"
-        f"RSI:    {s['rsi']:.0f}\n"
-        f"Trend:  {trend_icon}\n"
-        f"Zona:   {zona}\n"
-        f"Target: {fmt_price(s['target'])}\n"
-        f"Stop:   {fmt_price(s['stop'])}\n\n"
-        f"_{estado}_"
-    )
+def summary_buttons() -> list:
+    """Botones del resumen diario para ir a cada activo."""
+    return [
+        [("₿ BTC", "proy:BTCUSD"), ("Ξ ETH", "proy:ETHUSD")],
+        [("⬡ LINK", "proy:LINKUSD"), ("◎ SOL", "proy:SOLUSD")],
+        [("💎 Gems", "gems"), ("⚡ Scan ahora", "scan")],
+    ]
