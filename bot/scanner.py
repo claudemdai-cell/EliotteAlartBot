@@ -247,6 +247,11 @@ def get_asset_status(cfg: dict) -> dict | None:
     in_zone  = in_golden_zone(price, wave_start, wave_end)
     dist_pct = round(((price - gz_low) / gz_low) * 100, 1) if gz_low > 0 else 0
 
+    # C1 Elliott: tendencia alcista = zona correcta para buscar correcciones largas
+    # En bajista o lateral no hay estructura Elliott válida para entrada larga automática
+    trend_state = state.get("trend", "lateral")
+    in_elliott_zone = (trend_state == "alcista")
+
     payload = WebhookPayload(
         asset=asset, price=price,
         open_4h=opens[-1], close_4h=price,
@@ -254,7 +259,7 @@ def get_asset_status(cfg: dict) -> dict | None:
         rsi_4h=rsi, rsi_prev_4h=rsi_prev,
         volume_avg5=vol_avg5, volume_avg20=vol_avg20,
         current_volume=current_volume,
-        ema21_4h=ema21, in_elliott_zone=True,
+        ema21_4h=ema21, in_elliott_zone=in_elliott_zone,
         wave_start=wave_start, wave_end=wave_end,
         prev_open_4h=opens[-2], prev_close_4h=closes[-2],
         prev_high_4h=highs[-2], prev_low_4h=lows[-2],
@@ -308,6 +313,10 @@ def scan_asset(cfg: dict) -> None:
     target     = state.get("target",     max(highs) * 1.5)
     trend      = state.get("trend", "bajista")
 
+    # C1 Elliott: tendencia alcista = zona correcta para buscar correcciones largas
+    # En bajista o lateral no hay estructura Elliott válida para entrada larga automática
+    in_elliott_zone = (trend == "alcista")
+
     payload = WebhookPayload(
         asset=asset, price=closes[-1],
         open_4h=opens[-1], close_4h=closes[-1],
@@ -315,7 +324,7 @@ def scan_asset(cfg: dict) -> None:
         rsi_4h=rsi, rsi_prev_4h=rsi_prev,
         volume_avg5=vol_avg5, volume_avg20=vol_avg20,
         current_volume=current_volume,
-        ema21_4h=ema21, in_elliott_zone=True,
+        ema21_4h=ema21, in_elliott_zone=in_elliott_zone,
         wave_start=wave_start, wave_end=wave_end,
         prev_open_4h=opens[-2], prev_close_4h=closes[-2],
         prev_high_4h=highs[-2], prev_low_4h=lows[-2],
